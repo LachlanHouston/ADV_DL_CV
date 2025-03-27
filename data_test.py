@@ -66,14 +66,14 @@ def overlay_image_center(bg, fg, cx, cy):
 paths = {
     "head": "1example/tint1_head.png",
     "face": "1example/face1.png",
-    "hair": "1example/blackMan1.png",
+    "hair": "1example/blackWoman6.png",
     "arm": "1example/tint1_arm.png",
     "shirt": "1example/blueShirt1.png",
-    "sleeve": "1example/blueArm_long.png",
+    "sleeve": "1example/blueArm_shorter.png",
     "neck": "1example/tint1_neck.png",
     "leg": "1example/tint1_leg.png",
     "hand": "1example/tint1_hand.png",
-    "pants": "1example/pantsBlue1_long.png",
+    "pants": "1example/pantsBlue1_shorter.png",
     "shoe": "1example/blackShoe1.png",
     "pants_top": "1example/pantsBlue11.png",
 }
@@ -105,14 +105,15 @@ h, w = 600, 600
 canvas = np.zeros((h, w, 4), dtype=np.uint8)
 
 # Define center positions for each part.
-# Adjust these as needed for correct alignment.
 offsets = {
-    "hair": (300, 80),
-    "pants": (353, 470),
+    "hair": (300, 136), # Man1-4,6,7: (300, 80), Man5: (310, 80),
+        # Woman1: (300, 140), Woman2: (300, 168), Woman3: (300, 144), Woman4: (302, 170),
+        # Woman5: (301, 133), Woman6: (300, 136)
+    "pants": (350, 441), # Long: (353, 470), Short: (351, 445), # Shorter: (350, 441)
     "shirt": (300, 290),
     "arm": (433, 280),
     "neck": (300, 215),
-    "sleeve": (430, 275),
+    "sleeve": (378, 247), # Long: (430, 275), # Short: (403, 252), # Shorter: (378, 247)
     "leg": (350, 470),
     "hand": (510, 350),
     "head": (300, 125), 
@@ -132,9 +133,6 @@ offsets.update({
 # Overlay each part using center coordinates.
 canvas = overlay_image_center(canvas, neck, *offsets["neck"])
 canvas = overlay_image_center(canvas, shirt, *offsets["shirt"])
-canvas = overlay_image_center(canvas, head, *offsets["head"])
-canvas = overlay_image_center(canvas, face, *offsets["face"])
-canvas = overlay_image_center(canvas, hair, *offsets["hair"])
 canvas = overlay_image_center(canvas, arm, *offsets["arm"])
 canvas = overlay_image_center(canvas, arm_left, *offsets["arm_left"])
 canvas = overlay_image_center(canvas, hand, *offsets["hand"])
@@ -146,8 +144,11 @@ canvas = overlay_image_center(canvas, leg_left, *offsets["leg_left"])
 canvas = overlay_image_center(canvas, pants_top, *offsets["pants_top"])
 canvas = overlay_image_center(canvas, pants, *offsets["pants"])
 canvas = overlay_image_center(canvas, pants_left, *offsets["pants_left"])
+canvas = overlay_image_center(canvas, head, *offsets["head"])
+canvas = overlay_image_center(canvas, hair, *offsets["hair"])
 canvas = overlay_image_center(canvas, shoe, *offsets["shoe"])
 canvas = overlay_image_center(canvas, shoe_left, *offsets["shoe_left"])
+canvas = overlay_image_center(canvas, face, *offsets["face"])
 
 # Display the final composite image.
 cv2.imshow('Complete Character', canvas)
