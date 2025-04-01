@@ -7,24 +7,24 @@ import os
 from tqdm import tqdm
 import argparse
 from datetime import datetime
-
+import time
 
 # Debugging
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-
 # Import our model and dataset
 from src.models.simple_ar_cnn_model import AutoregressiveCharacterGenerator
-from src.data.simple_grayscale_character_dataset import GrayscaleLayerDataset, get_grayscale_dataloaders
+from src.data.simple_grayscale_character_dataset import get_pt_dataloaders
 
-def train_model(h5_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
+def train_model(dataset_path, metadata_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
     """
-    Train the autoregressive character generator model.
+    Train the autoregressive character generator model with pre-processed PyTorch data.
     
     Args:
-        h5_path: Path to the HDF5 dataset
+        dataset_path: Path to the PyTorch dataset file
+        metadata_path: Path to the metadata file
         output_dir: Directory to save outputs
         batch_size: Batch size for training
         num_epochs: Number of epochs to train
@@ -37,18 +37,24 @@ def train_model(h5_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     
-    # Get dataloaders
+    # Get dataloaders with fast loading
     print("Loading dataset...")
-    train_loader, val_loader = get_grayscale_dataloaders(
-        h5_path, 
-        target_size=(64, 64),
-        batch_size=batch_size,
-        max_samples=None  # Set to a small number for quick testing
+    data_loading_start = time.time()
+    train_loader, val_loader = get_pt_dataloaders(
+        dataset_path,
+        metadata_path,
+        batch_size=batch_size
     )
-    print(f"Dataset loaded. Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+    data_loading_time = time.time() - data_loading_start
+    print(f"Dataset loaded in {data_loading_time:.2f}s")
+    print(f"Train batches: {len(train_loader)}, Val batches: {len(val_loader)}")
+    
+    # Load metadata to determine model params
+    metadata = torch.load(metadata_path) if metadata_path else None
+    num_layers = metadata['num_layers'] if metadata else 18
     
     # Initialize model
-    model = AutoregressiveCharacterGenerator(num_layers=18).to(device)
+    model = AutoregressiveCharacterGenerator(num_layers=num_layers).to(device)
     
     # Loss function and optimizer
     criterion = nn.MSELoss()
@@ -58,7 +64,10 @@ def train_model(h5_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
     train_losses = []
     val_losses = []
     
+    total_train_time = 0
+    
     for epoch in range(num_epochs):
+        epoch_start = time.time()
         print(f"\nEpoch {epoch+1}/{num_epochs}")
         
         # Training phase
@@ -118,7 +127,11 @@ def train_model(h5_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
         val_loss /= len(val_loader)
         val_losses.append(val_loss)
         
+        epoch_time = time.time() - epoch_start
+        total_train_time += epoch_time
+        
         print(f"Epoch {epoch+1} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        print(f"Epoch time: {epoch_time:.2f}s")
         
         # Save model checkpoint
         if (epoch + 1) % 10 == 0 or epoch == num_epochs - 1:
@@ -148,21 +161,16 @@ def train_model(h5_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
     # Generate and save a full sequence
     generate_full_sequence(model, device, os.path.join(output_dir, 'full_sequence.png'))
     
+    avg_epoch_time = total_train_time / num_epochs
     print(f"Training completed. Results saved to {output_dir}")
+    print(f"Total training time: {total_train_time:.2f}s, Average epoch time: {avg_epoch_time:.2f}s")
+    
     return model
 
 def visualize_results(inputs, targets, outputs, save_path):
-    """
-    Visualize model results.
-    
-    Args:
-        inputs: Input images
-        targets: Target images
-        outputs: Predicted images
-        save_path: Path to save visualization
-    """
+    """Visualize model results."""
     # Take only the first 4 examples
-    num_examples = min(4, inputs.shape[0])
+    num_examples = min(40, inputs.shape[0])
     
     fig, axes = plt.subplots(3, num_examples, figsize=(3*num_examples, 9))
     
@@ -187,14 +195,7 @@ def visualize_results(inputs, targets, outputs, save_path):
     plt.close()
 
 def generate_full_sequence(model, device, save_path):
-    """
-    Generate and visualize a full character sequence.
-    
-    Args:
-        model: Trained model
-        device: Computation device
-        save_path: Path to save visualization
-    """
+    """Generate and visualize a full character sequence."""
     model.eval()
     
     # Generate a full sequence
@@ -221,10 +222,11 @@ def generate_full_sequence(model, device, save_path):
     plt.close()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train Character Generator')
-    parser.add_argument('--data', type=str, default="data/kenney_dataset_10.h5", help='Path to HDF5 dataset')
+    parser = argparse.ArgumentParser(description='Train Character Generator with PyTorch dataset')
+    parser.add_argument('--dataset', type=str, default="data/full_dataset.pt", help='Path to PyTorch dataset file')
+    parser.add_argument('--metadata', type=str, default=None, help='Path to metadata file')
     parser.add_argument('--output', type=str, default='./results', help='Output directory')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch-size', type=int, default=256, help='Batch size')
     parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     
@@ -236,7 +238,8 @@ if __name__ == "__main__":
     
     # Train the model
     model = train_model(
-        args.data,
+        args.dataset,
+        args.metadata,
         output_dir,
         batch_size=args.batch_size,
         num_epochs=args.epochs,

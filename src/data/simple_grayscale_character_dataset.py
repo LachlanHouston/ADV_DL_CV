@@ -1,100 +1,80 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-import h5py
-import numpy as np
-import cv2
+import os
+import time
 
-class GrayscaleLayerDataset(Dataset):
+class FastPtDataset(Dataset):
     """
-    Dataset for loading character layers from HDF5 and converting to grayscale.
+    Fast dataset that loads pre-processed PyTorch tensors.
     """
-    def __init__(self, h5_path, target_size=(64, 64), max_samples=None):
+    def __init__(self, dataset_path, metadata_path=None):
         """
+        Initialize dataset from pre-processed PyTorch tensors
+        
         Args:
-            h5_path: Path to the HDF5 file
-            target_size: Size to resize images to (default: 64x64)
-            max_samples: Maximum number of samples to use (for debugging)
+            dataset_path: Path to the saved PyTorch tensor file (.pt)
+            metadata_path: Path to the metadata file (optional)
         """
-        self.h5_path = h5_path
-        self.target_size = target_size
+        print(f"Loading dataset from {dataset_path}...")
+        start_time = time.time()
         
-        # Open the HDF5 file to get metadata
-        with h5py.File(self.h5_path, 'r') as f:
-            self.num_samples = f['images'].shape[0]
-            self.num_layers = f['images'].shape[1]
-            
-            if max_samples is not None:
-                self.num_samples = min(max_samples, self.num_samples)
+        # Load the dataset tensor directly into memory
+        self.all_data = torch.load(dataset_path)
         
-        # Create all possible (sample_idx, input_layer_idx) pairs for training
+        # Extract dimensions
+        self.num_samples, self.num_layers = self.all_data.shape[0], self.all_data.shape[1]
+        
+        # Load metadata if available
+        if metadata_path and os.path.exists(metadata_path):
+            self.metadata = torch.load(metadata_path)
+            print(f"Loaded metadata: {self.metadata}")
+        else:
+            self.metadata = None
+        
+        # Create training pairs (sample_idx, layer_idx)
         self.pairs = []
         for sample_idx in range(self.num_samples):
-            for layer_idx in range(self.num_layers - 1):  # -1 because we need a target
+            for layer_idx in range(self.num_layers - 1):  # -1 because we need target layer
                 self.pairs.append((sample_idx, layer_idx))
+        
+        loading_time = time.time() - start_time
+        print(f"Dataset loaded in {loading_time:.2f} seconds")
+        print(f"Dataset shape: {self.all_data.shape}, Training pairs: {len(self.pairs)}")
+        
+        # Calculate memory usage
+        memory_mb = self.all_data.element_size() * self.all_data.nelement() / (1024 * 1024)
+        print(f"Memory usage: {memory_mb:.2f} MB")
     
     def __len__(self):
         return len(self.pairs)
     
-    def rgba_to_grayscale(self, rgba):
-        """Convert RGBA image to grayscale, respecting alpha channel."""
-        # Extract RGB and alpha
-        rgb = rgba[:, :, :3]
-        alpha = rgba[:, :, 3:4]
-        
-        # Convert RGB to grayscale
-        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        
-        # Apply alpha mask (this preserves transparency)
-        gray = gray * (alpha[:, :, 0] / 255.0)
-        
-        return gray
-    
-    def resize_image(self, image):
-        """Resize image to target size."""
-        return cv2.resize(image, self.target_size, interpolation=cv2.INTER_AREA)
-    
     def __getitem__(self, idx):
+        """Get a training pair (input layer, target layer)"""
         sample_idx, layer_idx = self.pairs[idx]
         
-        with h5py.File(self.h5_path, 'r') as f:
-            # Get input and target layers (RGBA format)
-            input_rgba = f['images'][sample_idx, layer_idx]
-            target_rgba = f['images'][sample_idx, layer_idx + 1]
-            
-            # Convert to grayscale and resize
-            input_gray = self.rgba_to_grayscale(input_rgba)
-            target_gray = self.rgba_to_grayscale(target_rgba)
-            
-            input_resized = self.resize_image(input_gray)
-            target_resized = self.resize_image(target_gray)
-            
-            # Convert to torch tensors and normalize to [0, 1]
-            input_tensor = torch.from_numpy(input_resized).float() / 255.0
-            target_tensor = torch.from_numpy(target_resized).float() / 255.0
-            
-            # Add channel dimension
-            input_tensor = input_tensor.unsqueeze(0)
-            target_tensor = target_tensor.unsqueeze(0)
-            
-            return input_tensor, target_tensor, layer_idx
+        # Get input layer
+        input_layer = self.all_data[sample_idx, layer_idx].unsqueeze(0)  # Add channel dimension
+        
+        # Get target (next) layer
+        target_layer = self.all_data[sample_idx, layer_idx + 1].unsqueeze(0)  # Add channel dimension
+        
+        return input_layer, target_layer, layer_idx
 
-def get_grayscale_dataloaders(h5_path, target_size=(64, 64), batch_size=32, 
-                             train_ratio=0.8, max_samples=None):
+def get_pt_dataloaders(dataset_path, metadata_path=None, batch_size=32, train_ratio=0.8):
     """
-    Create train and validation dataloaders for grayscale character generation.
+    Create train and validation dataloaders from pre-processed PyTorch tensors
     
     Args:
-        h5_path: Path to the HDF5 file
-        target_size: Size to resize images to (default: 64x64)
-        batch_size: Batch size for dataloaders
+        dataset_path: Path to the saved PyTorch tensor file
+        metadata_path: Path to the metadata file (optional)
+        batch_size: Batch size for training
         train_ratio: Ratio of data to use for training
-        max_samples: Maximum number of samples to use (for debugging)
         
     Returns:
         train_loader, val_loader: PyTorch DataLoader objects
     """
     # Create dataset
-    dataset = GrayscaleLayerDataset(h5_path, target_size, max_samples)
+    dataset = FastPtDataset(dataset_path, metadata_path)
     
     # Split into train and validation
     train_size = int(train_ratio * len(dataset))
@@ -106,18 +86,37 @@ def get_grayscale_dataloaders(h5_path, target_size=(64, 64), batch_size=32,
     
     # Create dataloaders
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
+        train_dataset, batch_size=batch_size, shuffle=True, num_workers=2
     )
     
     val_loader = DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=False, num_workers=4
+        val_dataset, batch_size=batch_size, shuffle=False, num_workers=2
     )
     
     return train_loader, val_loader
 
 
 if __name__ == "__main__":
-
-    train_dataloader, val_dataloader = get_grayscale_dataloaders("data/kenney_dataset_10.h5")
-
-    print("")
+    # Simple test
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Test dataset loading")
+    parser.add_argument("--dataset", required=True, help="Path to dataset file")
+    parser.add_argument("--metadata", default=None, help="Path to metadata file")
+    
+    args = parser.parse_args()
+    
+    # Test dataset loading
+    dataset = FastPtDataset(args.dataset, args.metadata)
+    
+    # Test data access
+    input_layer, target_layer, layer_idx = dataset[0]
+    print(f"Sample 0 - Input shape: {input_layer.shape}, Target shape: {target_layer.shape}")
+    
+    # Test dataloader
+    train_loader, val_loader = get_pt_dataloaders(args.dataset, args.metadata, batch_size=4)
+    
+    # Get a batch
+    batch = next(iter(train_loader))
+    inputs, targets, layer_idxs = batch
+    print(f"Batch - Inputs: {inputs.shape}, Targets: {targets.shape}, Layer indices: {layer_idxs}")
