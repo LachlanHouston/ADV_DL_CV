@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import h5py
-from generate_character import get_character, get_random_character_options
+from src.data.generate_character import get_character, get_random_character_options
 from tqdm import tqdm
 
 # Global configuration variables.
