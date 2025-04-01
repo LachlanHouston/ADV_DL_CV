@@ -1,1 +1,3 @@
-# src/data/__init__.py
+from .dataset_kenny import LayerDataset
+
+__all__ = ['LayerDataset']
