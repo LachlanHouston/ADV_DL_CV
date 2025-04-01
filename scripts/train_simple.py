@@ -1,12 +1,16 @@
 import os
+import sys
 import h5py
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from tqdm import tqdm
+# Add the project root directory to the Python path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.data import LayerDataset
 
 # --- Model ---
 class LayerGenerator(nn.Module):
@@ -51,28 +55,30 @@ class LayerGenerator(nn.Module):
         return x
 
 # --- Training Loop ---
-def train_model():
+def train_model(greyscale=False, subset_fraction=1.0):
     # Hyperparameters and paths
     h5_file = 'data/kenney_dataset_1000.h5'
     dataset_name = 'images'
     img_size = 64          # adjust to your image resolution if needed
     transform = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize((img_size, img_size)),
         transforms.ToTensor()
     ])
     batch_size = 16
-    num_epochs = 20
+    num_epochs = 1
     learning_rate = 1e-3
 
     # Create dataset and dataloader
-    dataset = LayerDataset(h5_file, dataset_name, transform=transform)
+    dataset = LayerDataset(h5_file, dataset_name, img_size=img_size, transform=transform, 
+                          greyscale=greyscale, subset_fraction=subset_fraction)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
-    # Initialize model, loss, and optimizer.
-    model = LayerGenerator(img_size=img_size, patch_size=8, in_chans=4,
-                           embed_dim=256, num_transformer_layers=6, num_heads=8)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Initialize model with correct number of input channels
+    in_chans = 1 if greyscale else 4
+    model = LayerGenerator(img_size=img_size, patch_size=8, in_chans=in_chans,
+                        embed_dim=256, num_transformer_layers=6, num_heads=8)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
+    print(f"Using device: {device}")
     model.to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -98,4 +104,4 @@ def train_model():
     print("Model saved as layer_generator.pth")
 
 if __name__ == '__main__':
-    train_model()
+    train_model(greyscale=False, subset_fraction=0.01)

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import random
 import xml.etree.ElementTree as ET
-from src.data.options import *
+from src.data.module_names import *
 
 
 # Load an image with alpha channel if available; add alpha if missing.
