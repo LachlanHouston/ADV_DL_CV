@@ -1,5 +1,12 @@
 import torch
 from torch import nn
+import h5py
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
+from torchvision import datasets
+import tqdm
 
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
@@ -187,20 +194,60 @@ class ViT(nn.Module):
     
 if __name__ == '__main__':
     # Lav ny fil med train kode og data loader
-    model = ViT(image_size=(224, 224), channels=4, patch_size=(16, 16), embed_dim=768, num_heads=4, num_layers=4, pos_enc='learnable', pool='cls', dropout=0.1)
-    img = torch.randn(32, 6, 4, 224, 224)
+    model = ViT(image_size=(28, 28), channels=1, patch_size=(7, 7), embed_dim=768, num_heads=4, num_layers=4, pos_enc='learnable', pool='cls', dropout=0.1)
+    #img = torch.randn(32, 6, 4, 224, 224)
 
     # Loss function
     loss_function = nn.MSELoss()
 
     # Optimizer
     opt = torch.optim.AdamW(lr=1e-4, params=model.parameters(), weight_decay=1e-4)
+    
+    kenny_dataset = h5py.File('data/kenney_dataset_1000.h5', 'r') # [num_images, num_layers, pixel_h, pixel_w, num_channels]
+    print(kenny_dataset['images'].shape)
 
-    # One forward pass for each value in dim=1
-    for i in range(img.size(1)):
-        opt.zero_grad()
-        out = model(img[:, i])
-        loss = loss_function(out, img[:, i])
-        loss.backward()
-        opt.step()
-        print(f'Loss: {loss.item()}')
+    # Create a DataLoader from kenny_dataset
+    class KenneyDataset(torch.utils.data.Dataset):
+        def __init__(self, data):
+            self.data = data
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, idx):
+            image = self.data[idx]
+            # Transform to 64x64 greyscale
+            image = torch.tensor(image, dtype=torch.float32)
+            image = image.permute(0, 3, 1, 2)
+            images = torch.zeros((image.shape[0], 1, 28, 28), dtype=torch.float32)
+            for i in range(image.shape[0]):
+                resized_img = F.interpolate(image[i].unsqueeze(0), size=(28, 28), mode='bilinear', align_corners=False)
+                # Flatten to greyscale
+                greyscaled_img = resized_img.mean(dim=1, keepdim=True)
+                # Normalize to [0, 1]
+                images[i] = (greyscaled_img - greyscaled_img.min()) / (greyscaled_img.max() - greyscaled_img.min())
+
+            return images
+        
+    # Create the dataset and dataloader
+    dataset = KenneyDataset(kenny_dataset['images'])
+    train_loader = DataLoader(dataset, batch_size=1, shuffle=True)
+    # Print the shape of the images in the dataset
+    print(f"Dataset shape: {dataset[0].shape}")
+
+    # # Print the shape of the images in the dataloader
+    # print(f"Dataloader shape: {next(iter(train_loader))[0].shape}")
+
+    # Train the model
+    num_epochs = 1
+
+    for epoch in range(num_epochs):
+        print(f"Epoch {epoch+1}/{num_epochs}")
+        model.train()
+        running_loss = 0.0
+        for i, images in tqdm.tqdm(enumerate(train_loader), total=len(train_loader)):
+            images = images.squeeze(0)
+            for j in range(images.shape[0]):
+                images[j] = images[j]
+
+        print(f"Loss: {running_loss/len(train_loader)}")
