@@ -1,0 +1,9 @@
+# CONFIG FIL EKSEMPEL
+
+experiment_name: "layer_gen_vit_basic"
+experiment_dir: "experiments/"
+seed: 42
+
+data:
+  h5_path: "data/processed/kenney_dataset_1000.h5"
+  train_ratio: 0.8
