@@ -65,7 +65,7 @@ def train_model(greyscale=False, subset_fraction=1.0):
         transforms.ToTensor()
     ])
     batch_size = 16
-    num_epochs = 1
+    num_epochs = 20
     learning_rate = 1e-3
 
     # Create dataset and dataloader
@@ -104,4 +104,4 @@ def train_model(greyscale=False, subset_fraction=1.0):
     print("Model saved as layer_generator.pth")
 
 if __name__ == '__main__':
-    train_model(greyscale=False, subset_fraction=0.01)
+    train_model(greyscale=False, subset_fraction=1.)
