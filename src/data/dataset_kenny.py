@@ -75,3 +75,75 @@ class LayerDataset(Dataset):
             input_image = torch.tensor(input_image, dtype=torch.float32)
             target = torch.tensor(target, dtype=torch.float32)
         return input_image, target
+
+# --- New Dataset for PyTorch (.pt) files ---
+class LayerPtDataset(Dataset):
+    """
+    Creates training pairs from a pre-processed PyTorch tensor file (.pt).
+    For each sample (assumed shape: num_layers x H x W x C), each transition (layers 0..t -> layer t+1)
+    becomes one training example.
+    """
+    def __init__(self, pt_file, img_size=64, transform=None, greyscale=False, subset_fraction=1.0):
+        self.pt_file = pt_file
+        self.img_size = img_size
+        self.greyscale = greyscale
+        
+        # Define base transforms similar to LayerDataset
+        base_transforms = [
+            transforms.ToPILImage(),
+            transforms.Resize((self.img_size, self.img_size))
+        ]
+        
+        if self.greyscale:
+            base_transforms.append(transforms.Grayscale(num_output_channels=1))
+        
+        base_transforms.append(transforms.ToTensor())
+        
+        # If additional transforms are provided, add them after the base transforms
+        if transform is not None:
+            base_transforms.extend(transform.transforms)
+        self.transform = transforms.Compose(base_transforms)
+        
+        # Load the tensor data from the .pt file
+        self.all_data = torch.load(pt_file)
+        self.num_samples = self.all_data.shape[0]
+        self.num_layers = self.all_data.shape[1]
+        
+        # Build a list of (sample index, transition index) tuples
+        self.indices = []
+        num_samples_to_use = max(1, int(self.num_samples * subset_fraction))
+        for i in range(num_samples_to_use):
+            for t in range(self.num_layers - 1):
+                self.indices.append((i, t))
+    
+    def __len__(self):
+        return len(self.indices)
+    
+    def __getitem__(self, idx):
+        sample_idx, layer_idx = self.indices[idx]
+        # Retrieve the sample (assumed shape: num_layers x H x W x C)
+        sample = self.all_data[sample_idx]
+        
+        # If the data is stored as uint8, convert to float in [0, 1]
+        if isinstance(sample, torch.Tensor) and sample.dtype == torch.uint8:
+            sample = sample.float() / 255.0
+        elif isinstance(sample, np.ndarray) and sample.dtype == np.uint8:
+            sample = sample.astype(np.float32) / 255.0
+        
+        # Get the input (current layer) and target (next layer)
+        input_image = sample[layer_idx]
+        target = sample[layer_idx + 1]
+        
+        if self.transform:
+            input_image = self.transform(input_image)
+            target = self.transform(target)
+        else:
+            # Assume input is in HWC format; convert to CHW
+            if isinstance(input_image, torch.Tensor):
+                input_image = input_image.permute(2, 0, 1)
+                target = target.permute(2, 0, 1)
+            else:
+                input_image = torch.tensor(input_image).permute(2, 0, 1)
+                target = torch.tensor(target).permute(2, 0, 1)
+        
+        return input_image, target

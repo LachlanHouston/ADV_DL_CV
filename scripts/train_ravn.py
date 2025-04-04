@@ -8,9 +8,51 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 # Add the project root directory to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from src.data import LayerDataset
+from src.data import LayerDataset, LayerPtDataset
+
+def save_image_grid(input_images, target_images, predicted_images, epoch, save_dir='results'):
+    """Save a grid of images showing input, target, and predicted results."""
+    # Create the save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Take the first 7 images
+    n_images = min(7, input_images.shape[0])
+    
+    # Create a figure with 3 rows (input, target, predicted) and n_images columns
+    fig, axes = plt.subplots(3, n_images, figsize=(2*n_images, 6))
+    
+    for i in range(n_images):
+        # Input image
+        axes[0, i].imshow(input_images[i].cpu().squeeze().numpy(), cmap='gray' if input_images.shape[1] == 1 else None)
+        axes[0, i].axis('off')
+        if i == 0:
+            axes[0, i].set_title('Input', pad=10)
+            
+        # Target image
+        axes[1, i].imshow(target_images[i].cpu().squeeze().numpy(), cmap='gray' if target_images.shape[1] == 1 else None)
+        axes[1, i].axis('off')
+        if i == 0:
+            axes[1, i].set_title('Target', pad=10)
+            
+        # Predicted image
+        axes[2, i].imshow(predicted_images[i].cpu().squeeze().detach().numpy(), cmap='gray' if predicted_images.shape[1] == 1 else None)
+        axes[2, i].axis('off')
+        if i == 0:
+            axes[2, i].set_title('Predicted', pad=10)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'results_epoch_{epoch+1}.png'))
+    plt.close()
+
+subset_fraction = 0.01
+greyscale = True
+batch_size = 5
+num_epochs = 20
+learning_rate = 1e-3
+
 
 # --- Model ---
 class LayerGenerator(nn.Module):
@@ -57,19 +99,16 @@ class LayerGenerator(nn.Module):
 # --- Training Loop ---
 def train_model(greyscale=False, subset_fraction=1.0):
     # Hyperparameters and paths
-    h5_file = 'data/kenney_dataset_1000.h5'
-    dataset_name = 'images'
+    # data_file = 'data/kenney_dataset_1000.h5'
+    data_file = 'data/full_dataset.pt'
     img_size = 64          # adjust to your image resolution if needed
     transform = transforms.Compose([
         transforms.ToPILImage(),
         transforms.ToTensor()
     ])
-    batch_size = 16
-    num_epochs = 20
-    learning_rate = 1e-3
 
     # Create dataset and dataloader
-    dataset = LayerDataset(h5_file, dataset_name, img_size=img_size, transform=transform, 
+    dataset = LayerPtDataset(data_file, img_size=img_size, transform=transform, 
                           greyscale=greyscale, subset_fraction=subset_fraction)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
@@ -99,9 +138,13 @@ def train_model(greyscale=False, subset_fraction=1.0):
         epoch_loss /= len(dataset)
         print(f"Epoch {epoch+1}/{num_epochs} Loss: {epoch_loss:.4f}")
 
+        # Save images every 5 epochs
+        if (epoch + 1) % 5 == 0:
+            save_image_grid(input_image, target, output, epoch)
+
     # Save the trained model
     torch.save(model.state_dict(), 'layer_generator.pth')
     print("Model saved as layer_generator.pth")
 
 if __name__ == '__main__':
-    train_model(greyscale=False, subset_fraction=1.)
+    train_model(greyscale=greyscale, subset_fraction=subset_fraction)

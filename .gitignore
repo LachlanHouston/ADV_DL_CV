@@ -1,3 +1,5 @@
 /kenney_modular-characters
 /1example
 /.venv
+*.pyc
+*.pth
