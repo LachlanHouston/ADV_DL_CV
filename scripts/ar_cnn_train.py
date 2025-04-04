@@ -17,6 +17,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # Import our model and dataset
 from src.models.simple_ar_cnn_model import AutoregressiveCharacterGenerator
 from src.data.simple_grayscale_character_dataset import get_pt_dataloaders
+from src.utils.weighted_mse_loss import WeightedMSELoss
+from src.utils.weighted_proportional_mse_loss import WeightedProportionalMSELoss
+
 
 def train_model(dataset_path, metadata_path, output_dir, batch_size=32, num_epochs=50, lr=0.001):
     """
@@ -57,7 +60,7 @@ def train_model(dataset_path, metadata_path, output_dir, batch_size=32, num_epoc
     model = AutoregressiveCharacterGenerator(num_layers=num_layers).to(device)
     
     # Loss function and optimizer
-    criterion = nn.MSELoss()
+    criterion = WeightedProportionalMSELoss(threshold=0.05) #criterion = WeightedMSELoss(threshold=0.05, alpha=10.0)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     # Training loop
@@ -87,7 +90,7 @@ def train_model(dataset_path, metadata_path, output_dir, batch_size=32, num_epoc
             outputs = model(inputs, layer_idxs)
             
             # Calculate loss
-            loss = criterion(outputs, targets)
+            loss = criterion(inputs, outputs, targets)
             
             # Backward pass and optimize
             loss.backward()
@@ -114,7 +117,7 @@ def train_model(dataset_path, metadata_path, output_dir, batch_size=32, num_epoc
                 outputs = model(inputs, layer_idxs)
                 
                 # Calculate loss
-                loss = criterion(outputs, targets)
+                loss = criterion(inputs, outputs, targets)
                 val_loss += loss.item()
                 
                 # Save the first batch for visualization
