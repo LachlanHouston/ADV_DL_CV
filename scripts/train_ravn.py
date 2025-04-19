@@ -100,11 +100,6 @@ class LayerGenerator(nn.Module):
         self.decoder_out_chans = in_chans # Output channels should match target
         self.decoder = nn.Linear(embed_dim, patch_size * patch_size * self.decoder_out_chans)
 
-        # Optional: More sophisticated decoder (e.g., convolutional)
-        # Example: Transposed convolutions to upsample from transformer output
-        # self.decoder_head = nn.Linear(embed_dim, some_intermediate_dim)
-        # self.decoder_upsample = nn.Sequential(...) # ConvTranspose2d layers etc.
-
     def forward(self, x, layer_idx): # Add layer_idx as input
         # x: (B, in_chans, img_size, img_size)
         # layer_idx: (B,) tensor of layer indices
@@ -133,14 +128,6 @@ class LayerGenerator(nn.Module):
         # Decode each patch token to patch pixels
         x = self.decoder(x)  # (B, num_patches, patch_size*patch_size*decoder_out_chans)
 
-        # Reshape to image (B, decoder_out_chans, img_size, img_size)
-        # Use einops for potentially clearer reshaping
-        # from einops.layers.torch import Rearrange
-        # rearrange_op = Rearrange('b (h w) (p1 p2 c) -> b c (h p1) (w p2)',
-        #                         h=self.img_size // self.patch_size,
-        #                         w=self.img_size // self.patch_size,
-        #                         p1=self.patch_size, p2=self.patch_size)
-        # x = rearrange_op(x)
         # Manual reshape:
         patches_h = self.img_size // self.patch_size
         patches_w = self.img_size // self.patch_size
@@ -186,8 +173,6 @@ def train_model(greyscale=False, subset_fraction=1.0):
     # criterion = WeightedMSELoss(threshold=0.05)
     criterion = WeightedProportionalMSELoss(threshold=0.05) # Or keep this one
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    # Optional: Learning rate scheduler
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
 
     print(f"Starting training with batch size {batch_size}, epochs {num_epochs}, lr {learning_rate}")
