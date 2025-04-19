@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.data import LayerPtDataset # Ensure this returns layer_idx
 from src.utils.weighted_proportional_mse_loss import WeightedProportionalMSELoss
+# from src.utils.visualization_helpers import save_rollout_grid
 
 # --- Hyperparameters ---
 subset_fraction = 1.0     # Use 1.0 for full dataset, smaller for testing
@@ -33,7 +34,7 @@ greyscale = False         # Set to True for grayscale, False for color (4 channe
 img_size = 64             # Input/Output image size (consider increasing to 128 or 256 for details)
 patch_size = 8            # Relevant if using patch embedding elsewhere, not directly here
 batch_size = 32           # Adjust based on GPU memory (might need to decrease)
-num_epochs = 100          # Number of training epochs
+num_epochs = 200          # Number of training epochs
 learning_rate = 1e-4      # Initial learning rate
 cnn_start_filters = 32    # Number of filters in the first CNN layer
 transformer_embed_dim = 256 # Embedding dimension in the Transformer bottleneck
@@ -46,16 +47,81 @@ weight_decay = 0.05       # Weight decay for AdamW optimizer
 lambda_mse = 1.0          # Weight for WeightedProportionalMSELoss
 lambda_perceptual = 0.005   # Weight for VGGPerceptualLoss (start low, e.g., 0.01-0.1)
 
-VISUALIZE_AND_CHECKPOINT_FREQUENCY = 1     # Save images and model every N epochs
-SAVE_MODEL = False                          # Set to True to save checkpoints and final model
+VISUALIZE_AND_CHECKPOINT_FREQUENCY = 10     # Save images and model every N epochs
+SAVE_MODEL = True                          # Set to True to save checkpoints and final model
+visualize_rollouts = True
 
 
-# --- Configuration ---
+# --- Configuration ---ƒ
 data_file = 'data/full_dataset_color.pt' # Path to your dataset file
 # Create a unique directory for each run
 save_dir = f'results/hybrid_percLoss_{time.strftime("%Y%m%d_%H%M%S")}/'
 model_save_path = os.path.join(save_dir, 'hybrid_layer_generator.pth') # Final model path (legacy, now saved in loop)
 
+
+def _rollout(model, img_size, in_chans, num_layers=18,
+             device='cpu', start_canvas=None):
+    """
+    Generate a full sequence layer‑by‑layer.
+    If `start_canvas` is supplied it’s used as layer‑0; otherwise start from zeros.
+    Returns a list of (C,H,W) tensors including the starting canvas.
+    """
+    if start_canvas is None:
+        canvas = torch.zeros(1, in_chans, img_size, img_size, device=device)
+    else:
+        canvas = start_canvas.clone().to(device).unsqueeze(0)  # [1,C,H,W]
+
+    seq = [canvas.squeeze(0).cpu()]          # store layer‑0
+    model.eval()
+    with torch.no_grad():
+        for l in range(1, num_layers):
+            idx = torch.tensor([l], device=device)
+            canvas = model(canvas, idx)
+            seq.append(canvas.squeeze(0).cpu())
+    return seq
+
+def _sample_first_layer(dataset, device):
+    """
+    Grab a random sample whose layer_idx == 0 from the dataset and return its
+    input-canvas tensor.  Falls back to any sample if none are found.
+    """
+    import random
+    idxs = list(range(len(dataset)))
+    random.shuffle(idxs)
+    for i in idxs:
+        inp, _, layer_idx = dataset[i]
+        if int(layer_idx) == 0:
+            return inp.to(device)
+    # fallback
+    inp, _, _ = dataset[0]
+    return inp.to(device)
+
+def save_rollout_grid(model, save_dir, img_size, in_chans,
+                      device, epoch, dataset,
+                      n_rollouts=5, num_layers=18):
+    """Rows = roll‑outs, Cols = layers.  PNG written next to checkpoints."""
+    import matplotlib.pyplot as plt
+    rows, cols = n_rollouts, num_layers
+    fig, axes = plt.subplots(rows, cols, figsize=(cols*1.5, rows*1.5))
+    for r in range(rows):
+        start_canvas = _sample_first_layer(dataset, device)
+        seq = _rollout(model, img_size, in_chans, num_layers, device, start_canvas)
+        for c, img in enumerate(seq):
+            ax = axes[r, c] if rows > 1 else axes[c]
+            # --- convert tensor to displayable array with correct channel order ---
+            array_img, cmap = convert_for_imshow(img)
+            if cmap == 'gray':
+                ax.imshow(array_img, cmap='gray')
+            else:
+                ax.imshow(array_img)
+            ax.axis('off')
+            if r == 0:
+                ax.set_title(f"L{c}", fontsize=6)
+    plt.tight_layout()
+    out_path = os.path.join(save_dir, f'rollouts_epoch_{epoch}.png')
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    print(f"Roll-out grid saved to {out_path}")
 
 # --- VGG Perceptual Loss ---
 class VGGPerceptualLoss(nn.Module):
@@ -223,7 +289,7 @@ def convert_for_imshow(tensor_img):
 def save_image_grid(input_images, target_images, predicted_images, epoch, save_dir='results'):
     """Save a grid of images showing input, target, and predicted results."""
     os.makedirs(save_dir, exist_ok=True)
-    n_images = min(8, input_images.shape[0]) # Show fewer images to keep grid manageable
+    n_images = min(15, input_images.shape[0])
     fig, axes = plt.subplots(3, n_images, figsize=(2 * n_images, 6)) # Rows: Input, Target, Predicted
 
     # Ensure tensors are on CPU and detached
@@ -644,7 +710,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
         # --- Visualization and Checkpointing ---
         # Perform at specified frequency or on the last epoch
-        if (epoch + 1) % VISUALIZE_AND_CHECKPOINT_FREQUENCY == 0 or epoch == num_epochs - 1:
+        if (epoch + 1) % VISUALIZE_AND_CHECKPOINT_FREQUENCY == 0 or epoch == num_epochs - 1 or epoch == 0:
             print(f"--- Running Visualization & Checkpointing for Epoch {epoch+1} ---")
             try:
                 # Use last batch data for visualization (or load a fixed validation batch)
@@ -670,6 +736,12 @@ def train_model(greyscale=True, subset_fraction=1.0):
                 else:
                      print("Skipping visualization: Last batch data not available.")
 
+                # --- Optional roll‑out visualisation ---
+                if visualize_rollouts:
+                    save_rollout_grid(model, save_dir, img_size, in_chans, device, epoch,
+                                    dataset,
+                                    n_rollouts=5,
+                                    num_layers=num_layers_max if 'num_layers_max' in locals() else 18)
 
                 # --- Save Model Checkpoint ---
                 if SAVE_MODEL:
