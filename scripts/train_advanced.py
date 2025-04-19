@@ -34,7 +34,7 @@ decoder_start_dim = embed_dim // 2 # Dimension for decoder input, e.g., 256
 
 # --- Configuration ---
 data_file = 'data/full_dataset.pt' # Path to your preprocessed .pt dataset
-save_dir = 'results_vit_conv_decoder_v2' # Directory to save results and model
+save_dir = f'results/train_{time.strftime("%Y%m%d_%H%M%S")}/' # Directory with timestamp
 model_save_path = os.path.join(save_dir, 'vit_layer_generator_v2.pth')
 
 
@@ -191,7 +191,7 @@ class LayerGeneratorViTConvDecoder(nn.Module):
 
         return x
 
-# --- Training Loop (Modified for Clarity and Correctness) ---
+# --- Training Loop ---
 def train_model(greyscale=True, subset_fraction=1.0):
     in_chans = 1 if greyscale else 4
     out_chans = in_chans
