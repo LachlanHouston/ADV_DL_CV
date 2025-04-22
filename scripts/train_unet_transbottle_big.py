@@ -51,6 +51,7 @@ lambda_perceptual = 0.005   # Weight for VGGPerceptualLoss
 VISUALIZE_AND_CHECKPOINT_FREQUENCY = 10     # Save images and model every N epochs
 SAVE_MODEL = True                          # Set to True to save checkpoints and final model
 visualize_rollouts = True                  # Set to True to generate rollout visualizations
+use_diff_as_target = True
 
 
 # --- Configuration ---
@@ -197,6 +198,8 @@ def train_model(greyscale=True, subset_fraction=1.0):
             except Exception as e:
                  print(f"\nUnexpected error unpacking batch {batch_idx}: {e}")
                  continue # Skip this batch
+            if use_diff_as_target:
+                target = target - input_image
 
             # Move data to the training device
             try:

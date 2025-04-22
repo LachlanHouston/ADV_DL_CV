@@ -31,7 +31,7 @@ from src.utils.visualization import save_image_grid, save_rollout_grid
 
 
 # --- Hyperparameters ---
-subset_fraction = 1.0     # Use 1.0 for full dataset, smaller for testing
+subset_fraction = 1.0     # Use 1.0 for full dataset
 greyscale = False         # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
 img_size = 64             # Input/Output image size
 batch_size = 32           # Adjust based on GPU memory
