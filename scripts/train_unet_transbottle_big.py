@@ -41,7 +41,7 @@ cnn_start_filters = 64    # Number of filters in the first CNN layer
 transformer_embed_dim = 512 # Embedding dimension in the Transformer bottleneck
 cnn_depth = 4             # Number of down/up sampling stages in CNN U-Net part
 transformer_layers = 8    # Number of layers in the Transformer bottleneck
-transformer_heads = 12     # Number of attention heads in the Transformer
+transformer_heads = 8     # Number of attention heads in the Transformer (changed from 12 to 8 to be divisible with 512)
 weight_decay = 0.05       # Weight decay for AdamW optimizer
 
 # Loss Function Weights (IMPORTANT: TUNE THESE)
