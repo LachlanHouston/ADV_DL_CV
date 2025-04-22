@@ -41,7 +41,7 @@ cnn_start_filters = 64    # Number of filters in the first CNN layer
 transformer_embed_dim = 512 # Embedding dimension in the Transformer bottleneck
 cnn_depth = 4             # Number of down/up sampling stages in CNN U-Net part
 transformer_layers = 8    # Number of layers in the Transformer bottleneck
-transformer_heads = 12     # Number of attention heads in the Transformer
+transformer_heads = 8     # Number of attention heads in the Transformer
 weight_decay = 0.05       # Weight decay for AdamW optimizer
 
 # Loss Function Weights (IMPORTANT: TUNE THESE)
@@ -55,10 +55,10 @@ visualize_rollouts = True                  # Set to True to generate rollout vis
 
 # --- Configuration ---
 # Update this path to your actual dataset file
-data_file = 'data/full_dataset_color.pt'
+data_file = 'data/full_dataset_128.pt'
 # Create a unique directory for each run based on timestamp
 run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-save_dir = f'results/hybrid_percLoss_{run_timestamp}/'
+save_dir = f'results/BIG_hybrid_percLoss_{run_timestamp}/'
 # Note: Checkpoints are now saved within the training loop with epoch number
 
 # --- Training Function ---
