@@ -64,59 +64,68 @@ def convert_for_imshow(tensor_img):
 
     return array_img, cmap
 
-def save_image_grid(input_images, target_images, predicted_images, epoch, save_dir='results'):
-    """Save a grid of images showing input, target, and predicted results."""
+def save_image_grid(input_images, target_images, predicted_images, epoch, save_dir='results', use_diff_as_target=False):
+    """Save a grid of images showing input, target, and predicted results.
+
+    If use_diff_as_target is True, it assumes target_images and predicted_images
+    are differences, and it will display reconstructed images and the differences.
+    """
     os.makedirs(save_dir, exist_ok=True)
     n_images = min(15, input_images.shape[0]) # Limit grid width
-    fig, axes = plt.subplots(3, n_images, figsize=(2 * n_images, 6)) # Rows: Input, Target, Predicted
-
-    # Ensure axes is always 2D array for consistent indexing
-    if n_images == 1:
-        axes = axes.reshape(3, 1)
 
     # Ensure tensors are on CPU and detached
     input_images = input_images.cpu().detach().float()
-    target_images = target_images.cpu().detach().float()
-    predicted_images = predicted_images.cpu().detach().float()
+    target_images = target_images.cpu().detach().float() # Actual target or actual diff
+    predicted_images = predicted_images.cpu().detach().float() # Prediction or predicted diff
 
-    for i in range(n_images):
-        # Input Image
-        img_input, cmap_input = convert_for_imshow(input_images[i])
-        ax = axes[0, i]
-        ax.imshow(img_input, cmap=cmap_input)
-        ax.axis('off')
-        if i == 0: ax.set_ylabel('Input', rotation=0, size='large', labelpad=30)
+    if use_diff_as_target:
+        num_rows = 5
+        reconstructed_target = torch.clamp(input_images + target_images, 0, 1)
+        reconstructed_prediction = torch.clamp(input_images + predicted_images, 0, 1)
+        row_labels = ['Input', 'Target (Recon)', 'Predicted (Recon)', 'Target Diff', 'Predicted Diff']
+        images_to_plot = [
+            input_images, reconstructed_target, reconstructed_prediction,
+            target_images, predicted_images # target_images is actual diff, predicted_images is predicted diff
+        ]
+    else:
+        num_rows = 3
+        row_labels = ['Input', 'Target', 'Predicted']
+        images_to_plot = [input_images, target_images, predicted_images]
 
+    fig, axes = plt.subplots(num_rows, n_images, figsize=(2 * n_images, 2 * num_rows))
 
-        # Target Image
-        img_target, cmap_target = convert_for_imshow(target_images[i])
-        ax = axes[1, i]
-        ax.imshow(img_target, cmap=cmap_target)
-        ax.axis('off')
-        if i == 0: ax.set_ylabel('Target', rotation=0, size='large', labelpad=30)
-
-        # Predicted Image
-        img_pred, cmap_pred = convert_for_imshow(predicted_images[i])
-        ax = axes[2, i]
-        ax.imshow(img_pred, cmap=cmap_pred)
-        ax.axis('off')
-        if i == 0: ax.set_ylabel('Predicted', rotation=0, size='large', labelpad=30)
-
-        # Add title to the top row only
-        if i == n_images // 2: # Center the epoch title roughly
-             axes[0, i].set_title(f'Epoch {epoch+1}', pad=20)
+    # Ensure axes is always 2D array for consistent indexing
+    if n_images == 1:
+        axes = axes.reshape(num_rows, 1)
+    elif num_rows == 1: # Should not happen here, but safety check
+        axes = axes.reshape(1, n_images)
 
 
-    plt.tight_layout(pad=0.1, h_pad=0.5) # Adjust padding
+    for r in range(num_rows):
+        current_images = images_to_plot[r]
+        for i in range(n_images):
+            img_display, cmap_display = convert_for_imshow(current_images[i])
+            ax = axes[r, i]
+            ax.imshow(img_display, cmap=cmap_display)
+            ax.axis('off')
+            if i == 0: ax.set_ylabel(row_labels[r], rotation=0, size='large', labelpad=30)
+
+    # Add title to the top row only
+    if n_images > 0 : # Check if there are any images to plot
+        axes[0, n_images // 2].set_title(f'Epoch {epoch+1}', pad=15)
+
+
+    plt.tight_layout(pad=0.1, h_pad=0.5 if num_rows > 1 else 0.1) # Adjust padding
     plt.savefig(os.path.join(save_dir, f'results_epoch_{epoch+1:03d}.png'), dpi=150) # Adjust DPI if needed
     plt.close(fig) # Close the figure to free memory
 
 
 def _rollout(model, img_size, in_chans, num_layers=18,
-             device='cpu', start_canvas=None):
+             device='cpu', start_canvas=None, use_diff_as_target=False):
     """
     Generate a full sequence layer‑by‑layer.
-    If `start_canvas` is supplied it’s used as layer‑0; otherwise start from zeros.
+    If `start_canvas` is supplied it's used as layer‑0; otherwise start from zeros.
+    If `use_diff_as_target` is True, the model predicts the difference, which is added.
     Returns a list of (C,H,W) tensors including the starting canvas.
     """
     if start_canvas is None:
@@ -132,7 +141,15 @@ def _rollout(model, img_size, in_chans, num_layers=18,
     with torch.no_grad():
         for l in range(1, num_layers):
             idx = torch.tensor([l], device=device)
-            canvas = model(canvas, idx) # Generate next layer
+            output = model(canvas, idx) # Generate prediction (either full image or difference)
+
+            if use_diff_as_target:
+                # Model predicts difference, add it to the current canvas
+                canvas = canvas + output
+                canvas = torch.clamp(canvas, 0, 1) # Clamp result to valid range
+            else:
+                # Model predicts the full next layer
+                canvas = output
             seq.append(canvas.squeeze(0).cpu()) # Store result
     return seq
 
@@ -170,7 +187,7 @@ def _sample_first_layer(dataset, device):
 
 def save_rollout_grid(model, save_dir, img_size, in_chans,
                       device, epoch, dataset,
-                      n_rollouts=5, num_layers=18):
+                      n_rollouts=5, num_layers=18, use_diff_as_target=False):
     """Rows = roll‑outs, Cols = layers. PNG written next to checkpoints."""
     os.makedirs(save_dir, exist_ok=True)
     rows, cols = n_rollouts, num_layers
@@ -187,7 +204,7 @@ def save_rollout_grid(model, save_dir, img_size, in_chans,
 
     for r in range(rows):
         start_canvas = _sample_first_layer(dataset, device)
-        seq = _rollout(model, img_size, in_chans, num_layers, device, start_canvas)
+        seq = _rollout(model, img_size, in_chans, num_layers, device, start_canvas, use_diff_as_target)
         for c, img in enumerate(seq):
             if c >= cols: break # Don't try to plot more columns than exist
             ax = axes[r, c]

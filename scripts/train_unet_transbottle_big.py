@@ -47,6 +47,7 @@ weight_decay = 0.05       # Weight decay for AdamW optimizer
 # Loss Function Weights (IMPORTANT: TUNE THESE)
 lambda_mse = 1.0          # Weight for WeightedProportionalMSELoss
 lambda_perceptual = 0.005   # Weight for VGGPerceptualLoss
+use_diff_as_target = True
 
 VISUALIZE_AND_CHECKPOINT_FREQUENCY = 10     # Save images and model every N epochs
 SAVE_MODEL = True                          # Set to True to save checkpoints and final model
@@ -325,7 +326,9 @@ def train_model(greyscale=True, subset_fraction=1.0):
                               output_vis = model(input_image, layer_idx) # Use last batch input/layer_idx
 
                          # Save image grid (imported from visualization.py)
-                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir)
+                         # Pass the flag to handle difference visualization
+                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir,
+                                         use_diff_as_target=use_diff_as_target)
                          print(f"Visualization grid saved for epoch {epoch+1}")
 
                     # Set model back to training mode
@@ -338,10 +341,12 @@ def train_model(greyscale=True, subset_fraction=1.0):
                     # Ensure dataset object is available
                     if 'dataset' in locals():
                         # save_rollout_grid imported from visualization.py
+                         # Pass the flag to handle difference prediction in rollouts
                          save_rollout_grid(model, save_dir, img_size, in_chans, device, epoch,
                                          dataset,
                                          n_rollouts=min(5, batch_size), # Limit rollouts if batch size is small
-                                         num_layers=num_layers_max) # Use the determined max layers
+                                         num_layers=num_layers_max, # Use the determined max layers
+                                         use_diff_as_target=use_diff_as_target)
                     else:
                         print("Skipping rollouts: Dataset object not available.")
 
@@ -365,6 +370,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
                              'transformer_heads': transformer_heads, 'num_layers_max': num_layers_max,
                              'lambda_mse': lambda_mse, 'lambda_perceptual': lambda_perceptual,
                              'weight_decay': weight_decay,
+                             'use_diff_as_target': use_diff_as_target
                         }
                     }
                     torch.save(save_data, checkpoint_path)
