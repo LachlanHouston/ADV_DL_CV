@@ -43,6 +43,7 @@ cnn_depth = 4             # Number of down/up sampling stages in CNN U-Net part
 transformer_layers = 6    # Number of layers in the Transformer bottleneck
 transformer_heads = 8     # Number of attention heads in the Transformer
 weight_decay = 0.05       # Weight decay for AdamW optimizer
+use_diff_as_target = True # <<<<<<< ADDED THIS FLAG
 
 # Loss Function Weights (IMPORTANT: TUNE THESE)
 lambda_mse = 1.0          # Weight for WeightedProportionalMSELoss
@@ -198,6 +199,9 @@ def train_model(greyscale=True, subset_fraction=1.0):
                  print(f"\nUnexpected error unpacking batch {batch_idx}: {e}")
                  continue # Skip this batch
 
+            if use_diff_as_target:
+                target = target - input_image
+
             # Move data to the training device
             try:
                 input_image = input_image.to(device, non_blocking=True)
@@ -322,7 +326,8 @@ def train_model(greyscale=True, subset_fraction=1.0):
                               output_vis = model(input_image, layer_idx) # Use last batch input/layer_idx
 
                          # Save image grid (imported from visualization.py)
-                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir)
+                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir,
+                                         use_diff_as_target=use_diff_as_target)
                          print(f"Visualization grid saved for epoch {epoch+1}")
 
                     # Set model back to training mode
@@ -338,7 +343,8 @@ def train_model(greyscale=True, subset_fraction=1.0):
                          save_rollout_grid(model, save_dir, img_size, in_chans, device, epoch,
                                          dataset,
                                          n_rollouts=min(5, batch_size), # Limit rollouts if batch size is small
-                                         num_layers=num_layers_max) # Use the determined max layers
+                                         num_layers=num_layers_max, # Use the determined max layers
+                                         use_diff_as_target=use_diff_as_target)
                     else:
                         print("Skipping rollouts: Dataset object not available.")
 
@@ -362,6 +368,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
                              'transformer_heads': transformer_heads, 'num_layers_max': num_layers_max,
                              'lambda_mse': lambda_mse, 'lambda_perceptual': lambda_perceptual,
                              'weight_decay': weight_decay,
+                             'use_diff_as_target': use_diff_as_target # <<<<< Save the flag
                         }
                     }
                     torch.save(save_data, checkpoint_path)
