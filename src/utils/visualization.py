@@ -103,12 +103,49 @@ def save_image_grid(input_images, target_images, predicted_images, epoch, save_d
 
     for r in range(num_rows):
         current_images = images_to_plot[r]
+        row_label = row_labels[r]
+
         for i in range(n_images):
-            img_display, cmap_display = convert_for_imshow(current_images[i])
             ax = axes[r, i]
-            ax.imshow(img_display, cmap=cmap_display)
             ax.axis('off')
-            if i == 0: ax.set_ylabel(row_labels[r], rotation=0, size='large', labelpad=30)
+
+            # Handle difference visualization separately
+            if use_diff_as_target and row_label in ['Target Diff', 'Predicted Diff']:
+                diff_tensor = current_images[i]
+                diff_array = diff_tensor.cpu().detach().numpy()
+                cmap_diff = 'coolwarm' # Diverging colormap
+
+                # Handle channels: (C, H, W) -> (H, W, C) or (H, W)
+                if diff_array.ndim == 3:
+                    if diff_array.shape[0] == 1:
+                        # Grayscale diff: (1, H, W) -> (H, W)
+                        diff_array = diff_array.squeeze(0)
+                    elif diff_array.shape[0] == 3:
+                        # Color diff: (3, H, W) -> (H, W, 3)
+                        # Assume raw output doesn't need BGR->RGB swap like input
+                        diff_array = np.transpose(diff_array, (1, 2, 0))
+                        # Note: Displaying color differences directly can be tricky.
+                        # Often, visualizing the L1/L2 norm or just one channel is clearer.
+                        # For simplicity, we display as is; consider alternatives if needed.
+                        # cmap_diff = None # Let imshow handle color if needed
+                    else:
+                        # Fallback for unexpected channels: display first channel
+                        print(f"Warning: Unexpected shape for difference map {diff_tensor.shape}. Displaying first channel.")
+                        diff_array = diff_array[0]
+
+                # Display difference map with diverging colormap centered at 0
+                im = ax.imshow(diff_array, cmap=cmap_diff, vmin=-1.0, vmax=1.0)
+                # Optional: Add a colorbar for the difference maps (might clutter)
+                # if i == n_images - 1:
+                #     fig.colorbar(im, ax=ax)
+
+            else:
+                # Use standard conversion for Input, Target (Recon), Predicted (Recon)
+                img_display, cmap_display = convert_for_imshow(current_images[i])
+                if img_display is not None:
+                    ax.imshow(img_display, cmap=cmap_display)
+
+            if i == 0: ax.set_ylabel(row_label, rotation=0, size='large', labelpad=30)
 
     # Add title to the top row only
     if n_images > 0 : # Check if there are any images to plot

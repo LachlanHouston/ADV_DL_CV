@@ -18,6 +18,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F # Keep if used directly, e.g., for F.interpolate in loss check
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 # import torchvision.transforms as transforms # Keep if needed for LayerPtDataset preprocessing
@@ -47,7 +48,7 @@ use_diff_as_target = True # <<<<<<< ADDED THIS FLAG
 
 # Loss Function Weights (IMPORTANT: TUNE THESE)
 lambda_mse = 1.0          # Weight for WeightedProportionalMSELoss
-lambda_perceptual = 0.005   # Weight for VGGPerceptualLoss
+lambda_perceptual = 0.003   # Weight for VGGPerceptualLoss
 
 VISUALIZE_AND_CHECKPOINT_FREQUENCY = 10     # Save images and model every N epochs
 SAVE_MODEL = True                          # Set to True to save checkpoints and final model
@@ -59,7 +60,7 @@ visualize_rollouts = True                  # Set to True to generate rollout vis
 data_file = 'data/full_dataset_color.pt'
 # Create a unique directory for each run based on timestamp
 run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-save_dir = f'results/hybrid_percLoss_{run_timestamp}/'
+save_dir = f'results/diff_small_tanh{run_timestamp}/'
 # Note: Checkpoints are now saved within the training loop with epoch number
 
 # --- Training Function ---
@@ -152,11 +153,11 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
     # --- Loss Functions ---
     # Weighted MSE Loss (ensure it's imported correctly)
-    try:
+    if use_diff_as_target:
+        criterion_mse = nn.MSELoss()
+    else:
         criterion_mse = WeightedProportionalMSELoss(threshold=0.05).to(device)
-    except NameError:
-        print("Error: WeightedProportionalMSELoss not found. Make sure it's imported correctly.")
-        return
+
 
     # Perceptual Loss (imported from model.py)
     criterion_perceptual = VGGPerceptualLoss(feature_layers=[2, 7, 16, 25, 34]).to(device)
@@ -232,7 +233,13 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
                     # --- Calculate Loss Components ---
                     # Ensure input_image is also passed if needed by the loss function (e.g., WeightedProportionalMSELoss)
-                    loss_mse = criterion_mse(input_image, output, target)
+                    if use_diff_as_target:
+                        # nn.MSELoss expects (prediction, target)
+                        loss_mse = criterion_mse(output, target)
+                    else:
+                        # WeightedProportionalMSELoss expects (input, prediction, target)
+                        loss_mse = criterion_mse(input_image, output, target)
+                        
                     loss_perceptual = criterion_perceptual(output, target) # Compare generated vs target
 
                     # --- Combine Losses with Weights ---

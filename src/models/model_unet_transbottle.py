@@ -155,7 +155,9 @@ class LayerGeneratorHybrid(nn.Module):
         # Final Convolution: Map from last decoder block channels to output image channels
         self.final_conv = nn.Conv2d(current_chans, out_chans, kernel_size=1)
         # Final activation (Sigmoid for output in [0, 1])
-        self.final_act = nn.Sigmoid()
+        # self.final_act = nn.Sigmoid()
+        # self.final_act = nn.Tanh()
+        self.final_act = nn.Identity()
 
         # Initialize weights
         self.apply(self._init_weights)
