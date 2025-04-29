@@ -28,13 +28,13 @@ from tqdm import tqdm
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.data import LastLayerPtDataset # Ensure this returns (input, target, layer_idx)
 from src.utils.weighted_proportional_mse_loss import WeightedProportionalMSELoss
-from src.models.model_ddpm import Diffusion, UNet
+from src.models.model_ddpm import DDPM, UNet
 from src.utils.visualization import save_image_grid, save_rollout_grid
 
 
 # --- Hyperparameters ---
 subset_fraction = 1.0       # Use 1.0 for full dataset, smaller for testing
-greyscale = True          # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
+greyscale = False          # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
 img_size = 64             # Input/Output image size
 batch_size = 32           # Adjust based on GPU memory
 num_epochs = 200          # Number of training epochs
@@ -81,10 +81,12 @@ def save_images(images, path, show=True, title=None, nrow=10):
     plt.close()
 
 # --- Training Function ---
-def train_model(greyscale=True, subset_fraction=1.0):
-    """ Trains the LayerGeneratorHybrid model """
+def train_model(greyscale=False, subset_fraction=1.0):
+    """ Trains the DDPM model """
     in_chans = 1 if greyscale else 4 # Input channels (1 for grayscale, 4 for RGBA assumed)
     out_chans = in_chans # Output channels usually match input
+
+    no_samples = 36
 
     print(f"--- Training Configuration ---")
     print(f"Timestamp: {run_timestamp}")
@@ -103,6 +105,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
         dataset = LastLayerPtDataset(data_file, img_size=img_size, transform=None,
                                  greyscale=greyscale, subset_fraction=subset_fraction)
         print(f"Successfully loaded dataset. Number of samples: {len(dataset)}")
+        print(next(iter(dataset)).shape)  # Check shape of a sample
 
         # Determine max layers for embedding (important for the model)
         if hasattr(dataset, 'num_layers') and dataset.num_layers is not None:
@@ -141,28 +144,21 @@ def train_model(greyscale=True, subset_fraction=1.0):
     # Setup device, model, optimizer, losses, scheduler, scaler
     if torch.cuda.is_available():
         device = torch.device('cuda')
-    # elif torch.backends.mps.is_available(): # MPS support can be less stable
-    #     device = torch.device('mps')
     else:
         device = torch.device('cpu')
 
+    device = torch.device('mps') if torch.backends.mps.is_available() else device
+
     print(f"Using device: {device}")
 
-    model = UNet(
-    img_size=img_size,
-    c_in=in_chans,      # <-- single‐channel input
-    c_out=out_chans,     # <-- single‐channel output
-    device=device
-    ).to(device)
+    model = UNet(grey_scale=greyscale).to(device)
 
-    diffusion = Diffusion(
+    diffusion = DDPM(
+        network=model,
+        beta_1=beta_start,
+        beta_T=beta_end,
         T=max_timestep,
-        beta_start=beta_start,
-        beta_end=beta_end,
-        img_size=img_size,
-        img_channels=in_chans,  # <-- match your data
-        device=device
-    )
+        p_unconditional=1.0,).to(device)
 
     # Print model parameter count
     try:
@@ -191,9 +187,9 @@ def train_model(greyscale=True, subset_fraction=1.0):
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=1e-6)
     # # Automatic Mixed Precision (AMP) scaler for potential speedup on CUDA
     # # Enable AMP only if device is CUDA
-    # use_amp = (device.type == 'cuda')
-    # scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    # print(f"Using Automatic Mixed Precision (AMP): {use_amp}")
+    use_amp = (device.type == 'cuda')
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    print(f"Using Automatic Mixed Precision (AMP): {use_amp}")
 
 
     print(f"\n--- Starting Training ---")
@@ -210,18 +206,11 @@ def train_model(greyscale=True, subset_fraction=1.0):
         for i, images in enumerate(pbar):
             images = images.to(device)
 
-            # TASK 4: implement the training loop
-            t = diffusion.sample_timesteps(images.shape[0]).to(device) # line 3 from the Training algorithm
-            x_t, noise = diffusion.q_sample(images, t) # inject noise to the images (forward process), HINT: use q_sample
-            predicted_noise = diffusion.p_sample(UNet(), x_t, t) # predict noise of x_t using the UNet
-            # loss = criterion_mse(predicted_noise, noise) # calculate the loss
-            loss = torch.norm(predicted_noise - noise, p=2) # calculate the loss
-            
             optimizer.zero_grad()
+            loss = diffusion(images)  # Forward pass through the diffusion model
+            
             loss.backward()
             optimizer.step()
-
-
             pbar.set_postfix(MSE=loss.item())
 
             running_loss += loss.item()
@@ -241,15 +230,11 @@ def train_model(greyscale=True, subset_fraction=1.0):
         # ←— HERE: at the end of each epoch, generate & save samples:
         model.eval()
         with torch.no_grad():
-            samples = diffusion.p_sample_loop(
-                model,
-                batch_size=batch_size
-            )  # returns a uint8 tensor [B, C, H, W]
-        # Compute a square-ish grid size:
-        print(f"Generated {samples.shape[0]} samples.")
-        nrow = int(np.sqrt(batch_size))
-        if nrow * nrow < batch_size:
-            nrow = batch_size // nrow
+            samples = diffusion.sample((no_samples, in_chans, img_size, img_size), keep_steps=False)
+        print(f"Generated {no_samples} samples.")
+        nrow = int(np.sqrt(no_samples))
+        if nrow * nrow < no_samples:
+            nrow = no_samples // nrow
 
         # save_images() was defined above
         out_path = os.path.join(save_dir, f"samples_epoch_{epoch:03d}.png")
@@ -263,9 +248,23 @@ def train_model(greyscale=True, subset_fraction=1.0):
         print(f"[Epoch {epoch}] Sample images saved to {out_path}")
         model.train()
 
-        # Update the learning rate
-        scheduler.step()
-
+        try:
+            # Scale the loss for AMP
+            scaler.scale(loss).backward()
+            # Optional: Gradient clipping (can help stability)
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # Unscale gradients and step optimizer
+            scaler.step(optimizer)
+            # Update the scaler for next iteration
+            scaler.update()
+            # Step the learning rate scheduler (per step/batch)
+            scheduler.step()
+        except Exception as backward_err:
+                print(f"\nError during backward pass or optimizer step at epoch {epoch+1}, batch {i}: {backward_err}")
+                # Consider resetting gradients here too
+                optimizer.zero_grad(set_to_none=True)
+                continue # Skip this batch update
+        
     # --- End of Training Loop ---
     end_train_time = time.time()
     total_training_time = end_train_time - start_train_time

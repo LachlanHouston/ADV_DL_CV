@@ -7,270 +7,218 @@ import logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
 # Adapted from : https://github.com/dome272/Diffusion-Models-pytorch
 
-
-class Diffusion:
-    def __init__(
-        self,
-        T=500,
-        beta_start=1e-4,
-        beta_end=0.02,
-        img_size=64,
-        img_channels=1,
-        device="cuda"
-    ):
-        """
-        T : total diffusion steps
-        beta_start: start of beta schedule
-        beta_end: end of beta schedule
-        img_size: spatial size of the image
-        img_channels: number of channels in the image
-        """
-        self.T = T
-        self.beta_start = beta_start
-        self.beta_end = beta_end
-        self.img_size = img_size
-        self.img_channels = img_channels
-        self.device = device
-
-        self.betas = self.get_betas('linear').to(device)
-        self.alphas = 1. - self.betas
-        self.alphas_bar = torch.cumprod(self.alphas, dim=0)
-
-    def get_betas(self, schedule='linear'):
-        if schedule == 'linear':
-            return torch.linspace(self.beta_start, self.beta_end, self.T)
-        else:
-            raise NotImplementedError
-
-    def q_sample(self, x, t):
-        sqrt_ab = torch.sqrt(self.alphas_bar[t])[:, None, None, None]
-        sqrt_omb = torch.sqrt(1 - self.alphas_bar[t])[:, None, None, None]
-        noise = torch.randn_like(x)
-        x_t = sqrt_ab * x + sqrt_omb * noise
-        return x_t, noise
-
-    def p_mean_std(self, model, x_t, t):
-        alpha = self.alphas[t][:, None, None, None]
-        alpha_bar = self.alphas_bar[t][:, None, None, None]
-        beta = self.betas[t][:, None, None, None]
-
-        pred_noise = model(x_t, t)
-        mean = (1. / torch.sqrt(alpha)) * (
-            x_t - (1 - alpha) / torch.sqrt(1 - alpha_bar) * pred_noise
-        )
-        std = torch.sqrt(beta)
-        return mean, std
-
-    def p_sample(self, model, x_t, t):
-        mean, std = self.p_mean_std(model, x_t, t)
-        # no noise at t=1
-        noise = torch.stack([
-            torch.randn_like(x_t[i]) if t[i] > 1 else torch.zeros_like(x_t[i])
-            for i in range(x_t.shape[0])
-        ])
-        return mean + std * noise
-
-    def p_sample_loop(self, model, batch_size, timesteps_to_save=None):
-        logging.info(f"Sampling {batch_size} new images....")
-        model.eval()
-        intermediates = [] if timesteps_to_save else None
-
-        with torch.no_grad():
-            x = torch.randn(batch_size, self.img_channels,
-                            self.img_size, self.img_size, device=self.device)
-            for i in tqdm(reversed(range(1, self.T)), total=self.T-1):
-                t = torch.full((batch_size,), i, dtype=torch.long,
-                               device=self.device)
-                x = self.p_sample(model, x, t)
-
-                if timesteps_to_save and i in timesteps_to_save:
-                    xi = (x.clamp(-1,1)+1)/2 * 255
-                    intermediates.append(xi.type(torch.uint8))
-
-        model.train()
-        x = (x.clamp(-1,1)+1)/2 * 255
-        x = x.type(torch.uint8)
-
-        if intermediates is not None:
-            intermediates.append(x)
-            return x, intermediates
-        return x
-
-    def sample_timesteps(self, batch_size):
-        return torch.randint(1, self.T, (batch_size,), device=self.device)
-
-class SelfAttention(nn.Module):
-    def __init__(self, channels, size):
-        super(SelfAttention, self).__init__()
-        self.channels = channels
-        self.size = size
-        self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
-        self.ln = nn.LayerNorm([channels])
-        self.ff_self = nn.Sequential(
-            nn.LayerNorm([channels]),
-            nn.Linear(channels, channels),
-            nn.GELU(),
-            nn.Linear(channels, channels),
-        )
-
-    def forward(self, x):
-        x = x.view(-1, self.channels, self.size * self.size).swapaxes(1, 2)
-        x_ln = self.ln(x)
-        attention_value, _ = self.mha(x_ln, x_ln, x_ln)
-        attention_value = attention_value + x
-        attention_value = self.ff_self(attention_value) + attention_value
-        return attention_value.swapaxes(2, 1).view(-1, self.channels, self.size, self.size)
-
-
-class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, mid_channels=None, residual=False):
-        super().__init__()
-        self.residual = residual
-        if not mid_channels:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(1, mid_channels),
-            nn.GELU(),
-            nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False),
-            nn.GroupNorm(1, out_channels),
-        )
-
-    def forward(self, x):
-        if self.residual:
-            return F.gelu(x + self.double_conv(x))
-        else:
-            return self.double_conv(x)
-
-
-class Down(nn.Module):
-    def __init__(self, in_channels, out_channels, emb_dim=256):
-        super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool2d(2),
-            DoubleConv(in_channels, in_channels, residual=True),
-            DoubleConv(in_channels, out_channels),
-        )
-
-        self.emb_layer = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(
-                emb_dim,
-                out_channels
-            ),
-        )
-
-    def forward(self, x, t):
-        x = self.maxpool_conv(x)
-        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1])
-        return x + emb
-
-
-class Up(nn.Module):
-    def __init__(self, in_channels, out_channels, emb_dim=256):
-        super().__init__()
-
-        self.up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True)
-        self.conv = nn.Sequential(
-            DoubleConv(in_channels, in_channels, residual=True),
-            DoubleConv(in_channels, out_channels, in_channels // 2),
-        )
-
-        self.emb_layer = nn.Sequential(
-            nn.SiLU(),
-            nn.Linear(
-                emb_dim,
-                out_channels
-            ),
-        )
-
-    def forward(self, x, skip_x, t):
-        x = self.up(x)
-        x = torch.cat([skip_x, x], dim=1)
-        x = self.conv(x)
-        emb = self.emb_layer(t)[:, :, None, None].repeat(1, 1, x.shape[-2], x.shape[-1])
-        return x + emb
-
-
 class UNet(nn.Module):
-    def __init__(self, img_size=64, c_in=1, c_out=1,
-                 time_dim=256, device="cpu", channels=32):
+    """
+    A U-Net that **always emits the same number of channels it receives**.
+    
+    Parameters
+    ----------
+    channels     : sequence[int]
+        The widths for every resolution level (encoder depth = len(channels)).
+    grey_scale   : bool
+        If True, the data have a single image channel; otherwise we assume four
+        image channels (e.g. RGBA) and add the time channel → 5 total.
+    """
+    def __init__(self,
+                 channels=(32, 64, 128, 256, 512, 1024, 1024),
+                 grey_scale: bool = False):
         super().__init__()
-        self.device = device
-        self.time_dim = time_dim
 
-        # now accepts 1->32 channels
-        self.inc = DoubleConv(c_in, channels)
-        self.down1 = Down(channels, channels*2, emb_dim=time_dim)
-        self.sa1   = SelfAttention(channels*2, img_size//2)
-        self.down2 = Down(channels*2, channels*4, emb_dim=time_dim)
-        self.sa2   = SelfAttention(channels*4, img_size//4)
-        self.down3 = Down(channels*4, channels*4, emb_dim=time_dim)
-        self.sa3   = SelfAttention(channels*4, img_size//8)
+        # ─── overall I/O channel counts ──────────────────────────────────────────
+        self.nch = 2 if grey_scale else 5        # 1 / 4 img-ch + 1 time-ch
+        chs      = list(channels)                # make a mutable copy
 
-        self.bot1  = DoubleConv(channels*4, channels*8)
-        self.bot2  = DoubleConv(channels*8, channels*8)
-        self.bot3  = DoubleConv(channels*8, channels*4)
+        # ─── Encoder (list-comprehension) ───────────────────────────────────────
+        def _enc_block(in_ch, out_ch, first: bool):
+            """First level: conv; deeper levels: pool → conv.  Ends in LogSigmoid."""
+            layers = [] if first else [nn.MaxPool2d(2)]
+            layers += [nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
+                       nn.LogSigmoid()]
+            return nn.Sequential(*layers)
 
-        self.up1   = Up(channels*8, channels*2, emb_dim=time_dim)
-        self.sa4   = SelfAttention(channels*2, img_size//4)
-        self.up2   = Up(channels*4, channels, emb_dim=time_dim)
-        self.sa5   = SelfAttention(channels, img_size//2)
-        self.up3   = Up(channels*2, channels, emb_dim=time_dim)
-        self.sa6   = SelfAttention(channels, img_size)
+        self.encoder = nn.ModuleList(
+            [_enc_block(self.nch if i == 0 else chs[i - 1], chs[i], i == 0)
+             for i in range(len(chs))]
+        )
 
-        self.outc  = nn.Conv2d(channels, c_out, kernel_size=1)
+        # ─── Decoder (list-comprehension) ───────────────────────────────────────
+        def _dec_block(in_ch, out_ch):
+            return nn.Sequential(
+                nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2),
+                nn.LogSigmoid()
+            )
 
-    # … pos_encoding and forward as before …
+        # pure “×2” up-convs:
+        decoder_ups = (
+            [_dec_block(chs[-1], chs[-2])] +                              # first (no skip yet)
+            [_dec_block(chs[-(i + 1)] * 2, chs[-(i + 2)])                 # after concat
+             for i in range(1, len(chs) - 1)]
+        )
 
-    def pos_encoding(self, t, channels):
-        # compute 1/10000^(i/channels) as exp(-log(10000)*i/channels)
-        i = torch.arange(0, channels, 2, device=self.device).float()
-        inv_freq = torch.exp(- i * (math.log(10000.0) / channels)).to(t.device)
-        # shape of t is [batch, 1]? assume [B,1]
-        args = t * inv_freq.unsqueeze(0)          # broadcast to [B, channels//2]
-        pos_enc = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
-        return pos_enc
+        # final head that squashes back to `self.nch` channels
+        decoder_tail = nn.Sequential(
+            nn.Conv2d(chs[0] * 2, chs[0], kernel_size=3, padding=1),
+            nn.LogSigmoid(),
+            nn.Conv2d(chs[0], self.nch-1, kernel_size=3, padding=1)         # ← here
+        )
 
-    def forward(self, x, t):
-        t = t.unsqueeze(-1)
-        t = self.pos_encoding(t, self.time_dim)
+        self.decoder = nn.ModuleList(decoder_ups + [decoder_tail])
 
-        x1 = self.inc(x)
-        x2 = self.sa1(self.down1(x1, t))
-        x3 = self.sa2(self.down2(x2, t))
-        x4 = self.sa3(self.down3(x3, t))
+    # ─── forward ────────────────────────────────────────────────────────────────
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        x : (B, nch-1, H, W) – raw image channels
+        t : (B,) or (B,1)    – time step in [0,1]
+        returns (B, nch-1, H, W)
+        """
+        B, _, H, W = x.shape
+        if t.dim() == 1:
+            t = t.unsqueeze(-1)
 
-        x4 = self.bot3(self.bot2(self.bot1(x4)))
+        # broadcast `t` into a single time channel and concat
+        t_ch  = t.view(B, 1, 1, 1).expand(B, 1, H, W)
+        sig   = torch.cat([x, t_ch], dim=1)      # (B, self.nch, H, W)
 
-        x = self.sa4(self.up1(x4, x3, t))
-        x = self.sa5(self.up2(x, x2, t))
-        x = self.sa6(self.up3(x, x1, t))
-        return self.outc(x)
+        # ---- encode ----
+        skips = []
+        for i, enc in enumerate(self.encoder):
+            sig = enc(sig)
+            if i < len(self.encoder) - 1:        # keep all but bottleneck
+                skips.append(sig)
+
+        # ---- decode ----
+        for i, dec in enumerate(self.decoder):
+            if i == 0:                           # first up-conv – no skip yet
+                sig = dec(sig)
+            else:
+                skip = skips[-i]                 # matching feature map
+                sig  = torch.cat([sig, skip], dim=1)
+                sig  = dec(sig)
+
+        return sig
+
+
+class DDPM(nn.Module):
+    def __init__(self, network, beta_1=1e-4, beta_T=2e-2, T=100, p_unconditional=1.):
+        """
+        Initialiser en DDPM model.
+
+        Parameters:
+        network: [nn.Module]
+            netværket til at bruge i diffusion processen.
+        beta_1: [float]
+            Støjet i frøste skridt af diffusion processen.
+        beta_T: [float]
+            Støjet i det sidste skridt af diffusion processen.
+        T: [int]
+            Maks antal skridt i diffusion processsen.
+        """
+        super(DDPM, self).__init__()
+        self.network = network
+        self.beta_1 = beta_1
+        self.beta_T = beta_T
+        self.T = T
+        self.p_unconditional = p_unconditional
+
+        self.beta = nn.Parameter(torch.linspace(beta_1, beta_T, T), requires_grad=False)
+        self.alpha = nn.Parameter(1 - self.beta, requires_grad=False)
+        self.alpha_cumprod = nn.Parameter(self.alpha.cumprod(dim=0), requires_grad=False)
+
+        self.loss_criterion = nn.MSELoss(reduction='none')
+    
+    def negative_elbo(self, x):
+        # x: (B, C, H, W)
+        B = x.shape[0]
+        # 1) sample t uniformly and normalize
+        t = torch.randint(1, self.T, (B, 1), device=self.alpha.device)
+        normalized_t = (t + 1) / (self.T + 1)
+
+        # 2) make noise of same shape
+        epsilon = torch.randn_like(x)
+
+        # 3) form x_t in image-space: broadcast alpha_cumprod[t] to (B,1,1,1)
+        a_bar = self.alpha_cumprod[t].view(B, 1, 1, 1)
+        x_t = torch.sqrt(a_bar) * x + torch.sqrt(1 - a_bar) * epsilon
+
+        # 4) predict noise with your UNet
+        epsilon_params = self.network(x_t, normalized_t)
+
+        # 5) per-sample squared error summed over (C,H,W)
+        loss = self.loss_criterion(epsilon_params, epsilon).sum(dim=(1, 2, 3))
+
+        return loss
+
+    def sample(self, shape, keep_steps=False):
+        """
+        Sample fra modellen.
+
+        Parameters:
+        shape: [tuple]
+            Dimensionerne af samples der skal genereres.
+        Returns:
+        [torch.Tensor]
+            De genererede samples.
+        """
+        x_t = torch.randn(shape).to(self.alpha.device)
+
+        if keep_steps:
+            steps = [x_t]
+
+
+        for t in range(self.T-1, -1, -1):
+            if t > 1:
+                z = torch.randn(shape).to(self.alpha.device)
+            else:
+                z = 0
+
+            scale = 1 / torch.sqrt(self.alpha[t])
+            epsilon_params = self.network(x_t, torch.tensor([(t + 1)/(self.T + 1)] * shape[0]).unsqueeze(1).to(self.alpha.device))
+
+            parentheses = x_t - ((1 - self.alpha[t])/(torch.sqrt(1 - self.alpha_cumprod[t]))) * epsilon_params
+
+            const = torch.sqrt(self.beta[t]) * z
+            x_t = scale * parentheses + const
+            
+            if keep_steps:
+                steps.append(x_t)
+                
+        if keep_steps:
+            steps = torch.stack(steps, dim=1)
+            return steps
+        else:
+            return x_t
+    
+    def forward(self, x):
+        return self.negative_elbo(x).mean()
+
 
 
 # === Example instantiation & forward pass ===
 device = 'mps'
 
-model = UNet(
-    img_size=64,
-    c_in=1,      # <-- single‐channel input
-    c_out=1,     # <-- single‐channel output
-    device=device
+model = UNet(grey_scale=False).to(device)
+
+# Print model parameter count
+try:
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model Parameters: {total_params / 1e6:.2f} M")
+except Exception as e:
+    print(f"Could not calculate model parameters: {e}")
+
+diffusion = DDPM(
+    network=model,
+    beta_1=1e-4,
+    beta_T=0.02,
+    T=1000,
+    p_unconditional=1.0
 ).to(device)
 
-diffusion = Diffusion(
-    T=500,
-    beta_start=1e-4,
-    beta_end=0.02,
-    img_size=64,
-    img_channels=1,  # <-- match your data
-    device=device
-)
-
 # test a forward noising step:
-x = torch.randn(32, 1, 64, 64, device=device)        # your batch
-t = diffusion.sample_timesteps(32)                    # random timesteps
-x_t, noise = diffusion.q_sample(x, t)
-pred_noise = model(x_t, t)
-print(f"pred_noise shape: {pred_noise.shape}")
+x = torch.randn(32, 4, 64, 64, device=device)        # your batch
+#x = x.view(x.shape[0], -1)  # flatten the image
+loss = diffusion(x)
+print(f"Loss: {loss.item()}")
+
+# Test the sampling function
+sampled_images = diffusion.sample((4, 4, 64, 64))
+print(f"Sampled images shape: {sampled_images.shape}")  # Should be (32, T, 1, 64, 64)
