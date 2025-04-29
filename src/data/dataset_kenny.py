@@ -181,13 +181,3 @@ class LastLayerPtDataset(Dataset):
 
         # --- Return layer_idx ---
         return target # Return the layer index
-    
-# Test LastLayerPtDataset
-if __name__ == "__main__":
-    # Example usage
-    pt_file = 'data/full_dataset.pt'
-    dataset = LastLayerPtDataset(pt_file, img_size=64, greyscale=True)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
-    for batch in dataloader:
-        print(batch.shape)  # Should print the shape of the last layer
-        break

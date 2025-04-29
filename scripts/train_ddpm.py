@@ -33,14 +33,12 @@ from src.utils.visualization import save_image_grid, save_rollout_grid
 
 
 # --- Hyperparameters ---
-subset_fraction = 0.1     # Use 1.0 for full dataset, smaller for testing
-greyscale = True         # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
+subset_fraction = 1.0       # Use 1.0 for full dataset, smaller for testing
+greyscale = True          # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
 img_size = 64             # Input/Output image size
-batch_size = 4           # Adjust based on GPU memory
+batch_size = 32           # Adjust based on GPU memory
 num_epochs = 200          # Number of training epochs
-learning_rate = 1e-4      # Initial learning rate
-cnn_start_filters = 32    # Number of filters in the first CNN layer
-transformer_embed_dim = 256 # Embedding dimension in the Transformer bottleneck
+learning_rate = 1e-3      # Initial learning rate
 cnn_depth = 4             # Number of down/up sampling stages in CNN U-Net part
 transformer_layers = 6    # Number of layers in the Transformer bottleneck
 transformer_heads = 8     # Number of attention heads in the Transformer
@@ -93,9 +91,6 @@ def train_model(greyscale=True, subset_fraction=1.0):
     print(f"Dataset: {data_file}, Greyscale: {greyscale}, Subset: {subset_fraction*100:.1f}%")
     print(f"Image Size: {img_size}x{img_size}, Batch Size: {batch_size}, Epochs: {num_epochs}")
     print(f"LR: {learning_rate}, Weight Decay: {weight_decay}")
-    print(f"CNN Filters: {cnn_start_filters}, CNN Depth: {cnn_depth}")
-    print(f"Transformer Dim: {transformer_embed_dim}, Layers: {transformer_layers}, Heads: {transformer_heads}")
-    print(f"Loss Weights: MSE={lambda_mse}, Perceptual={lambda_perceptual}")
     print(f"Saving results to: {save_dir}")
     print("-" * 30)
 
@@ -151,7 +146,6 @@ def train_model(greyscale=True, subset_fraction=1.0):
     else:
         device = torch.device('cpu')
 
-    device = 'mps'
     print(f"Using device: {device}")
 
     model = UNet(
@@ -231,9 +225,6 @@ def train_model(greyscale=True, subset_fraction=1.0):
             pbar.set_postfix(MSE=loss.item())
 
             running_loss += loss.item()
-
-            if i > 0:
-                break
         
         epoch_loss = running_loss / len(dataloader)
         print(f"[Epoch {epoch}] Loss: {epoch_loss:.4f}")
@@ -271,6 +262,9 @@ def train_model(greyscale=True, subset_fraction=1.0):
         )
         print(f"[Epoch {epoch}] Sample images saved to {out_path}")
         model.train()
+
+        # Update the learning rate
+        scheduler.step()
 
     # --- End of Training Loop ---
     end_train_time = time.time()

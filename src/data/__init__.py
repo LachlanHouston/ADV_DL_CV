@@ -1,3 +1,3 @@
-from .dataset_kenny import LayerDataset, LayerPtDataset, LastLayerPtDataset
+from .dataset_kenny import LayerPtDataset, LastLayerPtDataset
 
 __all__ = ['LayerDataset']
