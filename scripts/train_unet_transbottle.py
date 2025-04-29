@@ -18,6 +18,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F # Keep if used directly, e.g., for F.interpolate in loss check
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 # import torchvision.transforms as transforms # Keep if needed for LayerPtDataset preprocessing
@@ -31,7 +32,7 @@ from src.utils.visualization import save_image_grid, save_rollout_grid
 
 
 # --- Hyperparameters ---
-subset_fraction = 1.0     # Use 1.0 for full dataset, smaller for testing
+subset_fraction = 1.0     # Use 1.0 for full dataset
 greyscale = False         # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
 img_size = 64             # Input/Output image size
 batch_size = 32           # Adjust based on GPU memory
@@ -43,10 +44,11 @@ cnn_depth = 4             # Number of down/up sampling stages in CNN U-Net part
 transformer_layers = 6    # Number of layers in the Transformer bottleneck
 transformer_heads = 8     # Number of attention heads in the Transformer
 weight_decay = 0.05       # Weight decay for AdamW optimizer
+use_diff_as_target = True # <<<<<<< ADDED THIS FLAG
 
 # Loss Function Weights (IMPORTANT: TUNE THESE)
 lambda_mse = 1.0          # Weight for WeightedProportionalMSELoss
-lambda_perceptual = 0.005   # Weight for VGGPerceptualLoss
+lambda_perceptual = 0.003   # Weight for VGGPerceptualLoss
 
 VISUALIZE_AND_CHECKPOINT_FREQUENCY = 10     # Save images and model every N epochs
 SAVE_MODEL = True                          # Set to True to save checkpoints and final model
@@ -58,7 +60,7 @@ visualize_rollouts = True                  # Set to True to generate rollout vis
 data_file = 'data/full_dataset_color.pt'
 # Create a unique directory for each run based on timestamp
 run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-save_dir = f'results/hybrid_percLoss_{run_timestamp}/'
+save_dir = f'results/diff_small_tanh{run_timestamp}/'
 # Note: Checkpoints are now saved within the training loop with epoch number
 
 # --- Training Function ---
@@ -151,11 +153,11 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
     # --- Loss Functions ---
     # Weighted MSE Loss (ensure it's imported correctly)
-    try:
+    if use_diff_as_target:
+        criterion_mse = nn.MSELoss()
+    else:
         criterion_mse = WeightedProportionalMSELoss(threshold=0.05).to(device)
-    except NameError:
-        print("Error: WeightedProportionalMSELoss not found. Make sure it's imported correctly.")
-        return
+
 
     # Perceptual Loss (imported from model.py)
     criterion_perceptual = VGGPerceptualLoss(feature_layers=[2, 7, 16, 25, 34]).to(device)
@@ -198,6 +200,9 @@ def train_model(greyscale=True, subset_fraction=1.0):
                  print(f"\nUnexpected error unpacking batch {batch_idx}: {e}")
                  continue # Skip this batch
 
+            if use_diff_as_target:
+                target = target - input_image
+
             # Move data to the training device
             try:
                 input_image = input_image.to(device, non_blocking=True)
@@ -228,7 +233,13 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
                     # --- Calculate Loss Components ---
                     # Ensure input_image is also passed if needed by the loss function (e.g., WeightedProportionalMSELoss)
-                    loss_mse = criterion_mse(input_image, output, target)
+                    if use_diff_as_target:
+                        # nn.MSELoss expects (prediction, target)
+                        loss_mse = criterion_mse(output, target)
+                    else:
+                        # WeightedProportionalMSELoss expects (input, prediction, target)
+                        loss_mse = criterion_mse(input_image, output, target)
+                        
                     loss_perceptual = criterion_perceptual(output, target) # Compare generated vs target
 
                     # --- Combine Losses with Weights ---
@@ -322,7 +333,8 @@ def train_model(greyscale=True, subset_fraction=1.0):
                               output_vis = model(input_image, layer_idx) # Use last batch input/layer_idx
 
                          # Save image grid (imported from visualization.py)
-                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir)
+                         save_image_grid(input_image, target, output_vis, epoch, save_dir=save_dir,
+                                         use_diff_as_target=use_diff_as_target)
                          print(f"Visualization grid saved for epoch {epoch+1}")
 
                     # Set model back to training mode
@@ -338,7 +350,8 @@ def train_model(greyscale=True, subset_fraction=1.0):
                          save_rollout_grid(model, save_dir, img_size, in_chans, device, epoch,
                                          dataset,
                                          n_rollouts=min(5, batch_size), # Limit rollouts if batch size is small
-                                         num_layers=num_layers_max) # Use the determined max layers
+                                         num_layers=num_layers_max, # Use the determined max layers
+                                         use_diff_as_target=use_diff_as_target)
                     else:
                         print("Skipping rollouts: Dataset object not available.")
 
@@ -362,6 +375,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
                              'transformer_heads': transformer_heads, 'num_layers_max': num_layers_max,
                              'lambda_mse': lambda_mse, 'lambda_perceptual': lambda_perceptual,
                              'weight_decay': weight_decay,
+                             'use_diff_as_target': use_diff_as_target # <<<<< Save the flag
                         }
                     }
                     torch.save(save_data, checkpoint_path)
