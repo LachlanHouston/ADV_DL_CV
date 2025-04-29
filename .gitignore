@@ -4,3 +4,5 @@
 *.pyc
 *.pth
 .DS_Store
+/data
+data/kenney_dataset_1000.h5
