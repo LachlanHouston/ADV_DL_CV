@@ -215,8 +215,12 @@ def train_model(greyscale=True, subset_fraction=1.0):
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model Parameters: {total_params / 1e6:.2f} M")
 
-    # --- Loss Functions (Simplified - No try-except) ---
-    criterion_mse = WeightedProportionalMSELoss(threshold=0.05).to(device)
+    # --- Loss Functions ---
+    if use_diff_as_target:
+        criterion_mse = nn.MSELoss()
+    else:
+        criterion_mse = WeightedProportionalMSELoss(threshold=0.05).to(device)
+    
     criterion_perceptual = VGGPerceptualLoss(feature_layers=[2, 7, 16, 25, 34]).to(device)
 
     # --- Optimizer and Scheduler ---
