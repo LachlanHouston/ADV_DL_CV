@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torch.nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
@@ -20,12 +21,14 @@ from src.utils.weighted_proportional_mse_loss import WeightedProportionalMSELoss
 from src.models.model_unet_transbottle import LayerGeneratorHybrid, VGGPerceptualLoss
 from src.utils.visualization import save_image_grid, save_rollout_grid
 
+run_name = "big_diff_split_mse"
+
 # --- Hyperparameters ---
 subset_fraction = 1.0     # Fraction of the *original* dataset file to load initially
 greyscale = False         # Set to True for grayscale (1 channel), False for color (e.g., 4 channels)
 img_size = 128            # Input/Output image size
 batch_size = 32           # Adjust based on GPU memory
-num_epochs = 400          # Number of training epochs
+num_epochs = 200          # Number of training epochs
 learning_rate = 1e-4      # Initial learning rate
 cnn_start_filters = 64    # Number of filters in the first CNN layer
 transformer_embed_dim = 512 # Embedding dimension in the Transformer bottleneck
@@ -56,7 +59,7 @@ visualize_rollouts = True # Generate rollout visualizations periodically
 # --- Configuration ---
 data_file = 'data/full_dataset_128.pt'
 run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-save_dir = f'results/big_diff_datasplit{run_timestamp}/'
+save_dir = f'results/{run_name}_{run_timestamp}/'
 best_model_filename = 'best_model_val.pth' # Filename for the best model based on validation
 plot_filename = 'loss_curves.png'
 final_model_filename = 'final_model_state.pth' # Optional: save final state regardless of performance
@@ -471,23 +474,53 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
     # --- Plotting Losses ---
     print(f"Generating loss plot at {plot_save_path}")
-    epochs = range(1, num_epochs + 1)
-    plt.figure(figsize=(10, 6))
-    plt.plot(epochs, train_losses_epoch, label='Training Loss')
-    plt.plot(epochs, val_losses_epoch, label='Validation Loss')
-    plt.title('Training and Validation Loss Over Epochs')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    # Add final test loss as a horizontal line or text if calculated
-    if test_loss is not None:
-         plt.axhline(y=test_loss, color='r', linestyle='--', label=f'Final Test Loss ({test_loss:.4f})')
-         # Or add as text: plt.text(epochs[-1] * 0.8, test_loss, f'Test Loss: {test_loss:.4f}', color='red')
+        plot_start_epoch = 20 # Define the epoch number you want to start plotting from
 
-    plt.legend()
-    plt.grid(True)
-    plt.savefig(plot_save_path)
-    print("Loss plot saved.")
-    # plt.show() # Optional: display plot if running interactively
+    # Ensure we have enough epochs to plot from the desired start
+    if num_epochs >= plot_start_epoch:
+        # Adjust the range for the x-axis (epochs)
+        # We want epochs from plot_start_epoch up to num_epochs (inclusive)
+        epochs_to_plot = range(plot_start_epoch, num_epochs + 1)
+
+        # Slice the loss lists to get data from the desired start epoch onwards
+        # Epoch plot_start_epoch corresponds to index plot_start_epoch - 1
+        train_losses_to_plot = train_losses_epoch[plot_start_epoch - 1:]
+        val_losses_to_plot = val_losses_epoch[plot_start_epoch - 1:]
+
+        plt.figure(figsize=(10, 6))
+        # Use the adjusted epochs and sliced loss data for plotting
+        plt.plot(epochs_to_plot, train_losses_to_plot, label=f'Training Loss (Epoch {plot_start_epoch}+)')
+        plt.plot(epochs_to_plot, val_losses_to_plot, label=f'Validation Loss (Epoch {plot_start_epoch}+)')
+        plt.title(f'Training and Validation Loss (Epochs {plot_start_epoch}-{num_epochs})') # Update title
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        # Add final test loss as a horizontal line - this part doesn't need slicing
+        if test_loss is not None:
+             plt.axhline(y=test_loss, color='r', linestyle='--', label=f'Final Test Loss ({test_loss:.4f})')
+
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(plot_save_path)
+        print(f"Loss plot saved (showing epochs {plot_start_epoch}-{num_epochs}).")
+        # plt.show() # Optional: display plot if running interactively
+
+    else:
+        # Handle the case where the total number of epochs is less than the desired start epoch
+        print(f"Warning: Total epochs ({num_epochs}) is less than the desired plot start epoch ({plot_start_epoch}). Plotting all epochs.")
+        # Fallback to plotting all epochs if training was too short
+        epochs_all = range(1, num_epochs + 1)
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs_all, train_losses_epoch, label='Training Loss')
+        plt.plot(epochs_all, val_losses_epoch, label='Validation Loss')
+        plt.title('Training and Validation Loss Over Epochs (Full Range)')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        if test_loss is not None:
+             plt.axhline(y=test_loss, color='r', linestyle='--', label=f'Final Test Loss ({test_loss:.4f})')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(plot_save_path)
+        print("Loss plot saved (full range shown due to short training).")
 
     # --- Optional: Save Final Model State ---
     if SAVE_MODEL:
