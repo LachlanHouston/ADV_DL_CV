@@ -276,9 +276,6 @@ def train_model(greyscale=True, subset_fraction=1.0):
                     # print(f"\nWarning: Resizing model output {output.shape} to match target {target.shape} in train batch {batch_idx}.")
                     output = F.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
 
-<<<<<<< Updated upstream
-                loss_mse = criterion_mse(input_image, output, target)
-=======
                     # --- Calculate Loss Components ---
                     # Ensure input_image is also passed if needed by the loss function (e.g., WeightedProportionalMSELoss)
                     if use_diff_as_target:
@@ -291,7 +288,6 @@ def train_model(greyscale=True, subset_fraction=1.0):
                         loss_mse = criterion_mse(input_image, output, target)
 
                     loss_perceptual = criterion_perceptual(output, target) # Compare generated vs target
->>>>>>> Stashed changes
 
                 if use_diff_as_target:
                     output_image = output + input_image
