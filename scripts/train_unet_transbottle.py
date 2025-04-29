@@ -152,7 +152,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
 
     # --- Loss Functions ---
-    # Weighted MSE Loss (ensure it's imported correctly)
+    # Weighted MSE Loss
     if use_diff_as_target:
         criterion_mse = nn.MSELoss()
     else:
