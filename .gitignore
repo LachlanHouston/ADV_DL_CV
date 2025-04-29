@@ -4,3 +4,12 @@
 *.pyc
 *.pth
 .DS_Store
+<<<<<<< Updated upstream
+/data
+data/kenney_dataset_1000.h5
+=======
+*.pt
+>>>>>>> Stashed changes
+/1example
+/1example
+/1example
