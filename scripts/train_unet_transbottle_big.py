@@ -474,7 +474,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
     # --- Plotting Losses ---
     print(f"Generating loss plot at {plot_save_path}")
-        plot_start_epoch = 20 # Define the epoch number you want to start plotting from
+    plot_start_epoch = 20 # Define the epoch number you want to start plotting from
 
     # Ensure we have enough epochs to plot from the desired start
     if num_epochs >= plot_start_epoch:
