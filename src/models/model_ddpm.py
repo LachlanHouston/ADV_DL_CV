@@ -5,7 +5,7 @@ import math
 from tqdm import tqdm
 import logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s: %(message)s", level=logging.INFO, datefmt="%I:%M:%S")
-# Adapted from : https://github.com/dome272/Diffusion-Models-pytorch
+# Adapted from : https://github.com/dome272/Diffusion-Models- pytorch
 
 class UNet(nn.Module):
     """
@@ -25,7 +25,7 @@ class UNet(nn.Module):
         super().__init__()
 
         # ─── overall I/O channel counts ──────────────────────────────────────────
-        self.nch = 2 if grey_scale else 5        # 1 / 4 img-ch + 1 time-ch
+        self.nch = 2 if grey_scale else 4        # 1 / 4 img-ch + 1 time-ch
         chs      = list(channels)                # make a mutable copy
 
         # ─── Encoder (list-comprehension) ───────────────────────────────────────
@@ -128,6 +128,7 @@ class DDPM(nn.Module):
     
     def negative_elbo(self, x):
         # x: (B, C, H, W)
+        x = (x - 0.5) * 2.0  # scale to [-1, 1]
         B = x.shape[0]
         # 1) sample t uniformly and normalize
         t = torch.randint(1, self.T, (B, 1), device=self.alpha.device)
@@ -190,35 +191,3 @@ class DDPM(nn.Module):
     
     def forward(self, x):
         return self.negative_elbo(x).mean()
-
-
-
-# === Example instantiation & forward pass ===
-device = 'mps'
-
-model = UNet(grey_scale=False).to(device)
-
-# Print model parameter count
-try:
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model Parameters: {total_params / 1e6:.2f} M")
-except Exception as e:
-    print(f"Could not calculate model parameters: {e}")
-
-diffusion = DDPM(
-    network=model,
-    beta_1=1e-4,
-    beta_T=0.02,
-    T=1000,
-    p_unconditional=1.0
-).to(device)
-
-# test a forward noising step:
-x = torch.randn(32, 4, 64, 64, device=device)        # your batch
-#x = x.view(x.shape[0], -1)  # flatten the image
-loss = diffusion(x)
-print(f"Loss: {loss.item()}")
-
-# Test the sampling function
-sampled_images = diffusion.sample((4, 4, 64, 64))
-print(f"Sampled images shape: {sampled_images.shape}")  # Should be (32, T, 1, 64, 64)
