@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torch.nn
+import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
@@ -59,7 +59,7 @@ visualize_rollouts = True # Generate rollout visualizations periodically
 # --- Configuration ---
 data_file = 'data/full_dataset_128.pt'
 run_timestamp = time.strftime("%Y%m%d_%H%M%S")
-save_dir = f'results/{run_name}_{run_timestamp}/'
+save_dir = f'results/{run_timestamp}_{run_name}/'
 best_model_filename = 'best_model_val.pth' # Filename for the best model based on validation
 plot_filename = 'loss_curves.png'
 final_model_filename = 'final_model_state.pth' # Optional: save final state regardless of performance
@@ -92,15 +92,23 @@ def evaluate(model, dataloader, criterion_mse, criterion_perceptual, device, use
             original_target = original_target.to(device, non_blocking=True) # Also move original
 
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.cuda.amp.autocast(enabled=use_amp): # Deprecation warning exists here, fix below
                 output = model(input_image, layer_idx)
 
                 # Ensure shapes match for loss calculation
                 if output.shape != target.shape:
                     output = F.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
 
-                # Calculate loss components
-                loss_mse = criterion_mse(input_image, output, target)
+                # --- Calculate Loss Components ---
+                # FIX: Use conditional logic for criterion_mse call
+                if use_diff_as_target:
+                    # In diff mode, criterion_mse is nn.MSELoss, expects (prediction, target)
+                    # Here 'output' is predicted diff, 'target' is actual diff.
+                    loss_mse = criterion_mse(output, target)
+                else:
+                    # In non-diff mode, criterion_mse is WeightedProportionalMSELoss, expects (input, prediction, target)
+                    # Here 'output' is predicted target, 'target' is actual target.
+                    loss_mse = criterion_mse(input_image, output, target) # This call is now correct for this case
 
                 # Perceptual loss compares the generated *image* vs original target
                 if use_diff_as_target:
@@ -111,17 +119,17 @@ def evaluate(model, dataloader, criterion_mse, criterion_perceptual, device, use
                     loss_perceptual = criterion_perceptual(output, original_target)
 
 
-                loss = (lambda_mse * loss_mse) + (lambda_perceptual * loss_perceptual)
+                loss = (lambda_mse * loss_mse) + (lambda_perceptual * loss_perceptual)  
 
             # Simplified: Assume loss is valid (no NaN/Inf check)
             total_loss += loss.item()
-            total_mse_loss += loss_mse.item()
-            total_perc_loss += loss_perceptual.item()
+            total_mse_loss += loss_mse.item() # Accumulate the component loss
+            total_perc_loss += loss_perceptual.item() # Accumulate the component loss
             progress_bar.set_postfix(loss=f"{loss.item():.4f}")
 
     avg_loss = total_loss / num_batches
-    avg_mse = total_mse_loss / num_batches
-    avg_perc = total_perc_loss / num_batches
+    avg_mse = total_mse_loss / num_batches # Calculate average component loss
+    avg_perc = total_perc_loss / num_batches # Calculate average component loss
     return avg_loss, avg_mse, avg_perc
 
 
@@ -271,24 +279,24 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
             optimizer.zero_grad(set_to_none=True)
 
-            # Simplified: Assume forward pass works
+
             with torch.cuda.amp.autocast(enabled=use_amp):
                 output = model(input_image, layer_idx)
 
                 if output.shape != target.shape:
-                    # print(f"\nWarning: Resizing model output {output.shape} to match target {target.shape} in train batch {batch_idx}.")
+                    print(f"\nWarning: Resizing model output {output.shape} to match target {target.shape} in train batch {batch_idx}.")
                     output = F.interpolate(output, size=target.shape[-2:], mode='bilinear', align_corners=False)
 
-                    # --- Calculate Loss Components ---
-                    # Ensure input_image is also passed if needed by the loss function (e.g., WeightedProportionalMSELoss)
-                    if use_diff_as_target:
-                        # In diff mode, criterion_mse is likely nn.MSELoss, expects (prediction, target)
-                        # Here 'output' is predicted diff, 'target' is actual diff.
-                        loss_mse = criterion_mse(output, target)
-                    else:
-                        # In non-diff mode, criterion_mse is WeightedProportionalMSELoss, expects (input, prediction, target)
-                        # Here 'output' is predicted target, 'target' is actual target.
-                        loss_mse = criterion_mse(input_image, output, target)
+                # --- Calculate Loss Components ---
+                # Ensure input_image is also passed if needed by the loss function (e.g., WeightedProportionalMSELoss)
+                if use_diff_as_target:
+                    # In diff mode, criterion_mse is likely nn.MSELoss, expects (prediction, target)
+                    # Here 'output' is predicted diff, 'target' is actual diff.
+                    loss_mse = criterion_mse(output, target)
+                else:
+                    # In non-diff mode, criterion_mse is WeightedProportionalMSELoss, expects (input, prediction, target)
+                    # Here 'output' is predicted target, 'target' is actual target.
+                    loss_mse = criterion_mse(input_image, output, target)
 
                     loss_perceptual = criterion_perceptual(output, target) # Compare generated vs target
 
@@ -474,7 +482,7 @@ def train_model(greyscale=True, subset_fraction=1.0):
 
     # --- Plotting Losses ---
     print(f"Generating loss plot at {plot_save_path}")
-        plot_start_epoch = 20 # Define the epoch number you want to start plotting from
+    plot_start_epoch = 20 # Define the epoch number you want to start plotting from
 
     # Ensure we have enough epochs to plot from the desired start
     if num_epochs >= plot_start_epoch:
