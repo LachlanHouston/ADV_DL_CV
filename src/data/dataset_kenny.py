@@ -115,6 +115,11 @@ class LastLayerPtDataset(Dataset):
 
         if self.greyscale:
             base_transforms.append(transforms.Grayscale(num_output_channels=1))
+        else:
+            # Force to 4 channels. If the image is not already 4 channels, convert it.
+            base_transforms.append(
+                transforms.Lambda(lambda img: img.convert("RGBA") if img.mode != "RGBA" else img)
+            )
 
         base_transforms.append(transforms.ToTensor())
 
